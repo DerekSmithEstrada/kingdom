@@ -70,7 +70,7 @@ def load_game(path: str) -> None:
     max_id = 0
     for entry in data.get("buildings", []):
         type_key = entry.get("type")
-        if not type_key or type_key not in config.RECETAS:
+        if not type_key or type_key not in config.BUILDING_RECIPES:
             continue
         building = build_from_config(type_key)
         building.id = int(entry.get("id", building.id))
