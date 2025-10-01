@@ -17,12 +17,31 @@ def _season_snapshot(state=None) -> Dict[str, object]:
 # Initialisation and ticking
 
 
+def _success_response(**payload: object) -> Dict[str, object]:
+    response: Dict[str, object] = {"ok": True}
+    response.update(payload)
+    return response
+
+
+def _error_response(code: str, message: str) -> Dict[str, object]:
+    return {
+        "ok": False,
+        "error_code": code,
+        "error_message": message,
+        "error": message,
+    }
+
+
 def init_game() -> Dict[str, object]:
     """Initialise or reset the global game state using configuration defaults."""
 
     state = get_game_state()
     state.reset()
-    return {"ok": True, "season": _season_snapshot(state)}
+    return _success_response(
+        season=_season_snapshot(state),
+        buildings=state.snapshot_buildings(),
+        production_report=state.production_reports_snapshot(),
+    )
 
 
 def tick(dt: float) -> Dict[str, object]:
@@ -30,7 +49,22 @@ def tick(dt: float) -> Dict[str, object]:
 
     state = get_game_state()
     state.tick(max(0.0, float(dt)))
-    return {"ok": True, "season": _season_snapshot(state)}
+    return _success_response(
+        season=_season_snapshot(state),
+        buildings=state.snapshot_buildings(),
+        production_report=state.production_reports_snapshot(),
+    )
+
+
+def get_state() -> Dict[str, object]:
+    """Return a snapshot of the overall game state."""
+
+    state = get_game_state()
+    return _success_response(
+        season=_season_snapshot(state),
+        buildings=state.snapshot_buildings(),
+        production_report=state.production_reports_snapshot(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -65,27 +99,39 @@ def build_building(type_key: str) -> Dict[str, object]:
     state = get_game_state()
     try:
         building = state.build_building(type_key)
-        return {"ok": True, "building": building.to_snapshot()}
+        snapshot = state.snapshot_building(building.id)
+        return _success_response(
+            building=snapshot,
+            production_report=snapshot["last_report"],
+        )
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        message = str(exc)
+        if "Tipo de edificio desconocido" in message:
+            return _error_response("invalid_building_type", message)
+        return _error_response("missing_resources", message)
 
 
 def demolish_building(building_id: int) -> Dict[str, object]:
     state = get_game_state()
     try:
         state.demolish_building(int(building_id))
-        return {"ok": True}
+        return _success_response()
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        return _error_response("building_not_found", str(exc))
 
 
 def toggle_building(building_id: int, enabled: bool) -> Dict[str, object]:
     state = get_game_state()
     try:
-        state.toggle_building(int(building_id), bool(enabled))
-        return {"ok": True}
+        building_id = int(building_id)
+        state.toggle_building(building_id, bool(enabled))
+        snapshot = state.snapshot_building(building_id)
+        return _success_response(
+            building=snapshot,
+            production_report=snapshot["last_report"],
+        )
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        return _error_response("building_not_found", str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -95,22 +141,36 @@ def toggle_building(building_id: int, enabled: bool) -> Dict[str, object]:
 def assign_workers(building_id: int, num: int) -> Dict[str, object]:
     state = get_game_state()
     try:
-        assigned = state.assign_workers(int(building_id), int(num))
-        result: Dict[str, object] = {"ok": True, "assigned": assigned}
+        building_id = int(building_id)
+        num = int(num)
+        assigned = state.assign_workers(building_id, num)
+        snapshot = state.snapshot_building(building_id)
+        result: Dict[str, object] = _success_response(
+            assigned=assigned,
+            building=snapshot,
+            production_report=snapshot["last_report"],
+        )
         if assigned < num:
             result["warning"] = "No se pudieron asignar todos los trabajadores"
         return result
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        return _error_response("building_not_found", str(exc))
 
 
 def unassign_workers(building_id: int, num: int) -> Dict[str, object]:
     state = get_game_state()
     try:
-        unassigned = state.unassign_workers(int(building_id), int(num))
-        return {"ok": True, "unassigned": unassigned}
+        building_id = int(building_id)
+        num = int(num)
+        unassigned = state.unassign_workers(building_id, num)
+        snapshot = state.snapshot_building(building_id)
+        return _success_response(
+            unassigned=unassigned,
+            building=snapshot,
+            production_report=snapshot["last_report"],
+        )
     except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        return _error_response("building_not_found", str(exc))
 
 
 # ---------------------------------------------------------------------------
