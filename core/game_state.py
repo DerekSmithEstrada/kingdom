@@ -29,6 +29,7 @@ class GameState:
         self.buildings: Dict[int, Building] = {}
         self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
         self._initialise_inventory()
+        self.last_production_reports: Dict[int, Dict[str, object]] = {}
 
     # ------------------------------------------------------------------
     @classmethod
@@ -48,6 +49,7 @@ class GameState:
         self.buildings = {}
         Building.reset_ids()
         self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
+        self.last_production_reports = {}
 
     # ------------------------------------------------------------------
     def _initialise_inventory(self) -> None:
@@ -76,9 +78,11 @@ class GameState:
 
         self.trade_manager.tick(dt, self.inventory, self.add_notification)
 
+        self.last_production_reports = {}
         for building in list(self.buildings.values()):
             modifiers = self.get_production_modifiers(building)
-            building.tick(dt, self.inventory, self.add_notification, modifiers)
+            report = building.tick(dt, self.inventory, self.add_notification, modifiers)
+            self.last_production_reports[building.id] = report
 
     def get_production_modifiers(self, building: Building) -> Dict[str, float]:
         season_mod = config.SEASON_MODIFIERS.get(self.season, {})

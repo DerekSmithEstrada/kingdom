@@ -67,6 +67,19 @@ class Inventory:
             self.quantities[resource] = max(0.0, self.quantities.get(resource, 0.0) - amount)
         return True
 
+    def can_add(self, resources: Dict[Resource, float]) -> bool:
+        """Check if ``resources`` can fit in the available capacities."""
+
+        for resource, amount in resources.items():
+            if amount <= 0:
+                continue
+            capacity = self.get_capacity(resource)
+            if capacity is None:
+                continue
+            if self.quantities.get(resource, 0.0) + amount > capacity + 1e-9:
+                return False
+        return True
+
     def add(self, resources: Dict[Resource, float]) -> Dict[Resource, float]:
         residual: Dict[Resource, float] = {}
         for resource, amount in resources.items():

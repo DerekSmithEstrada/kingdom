@@ -26,6 +26,9 @@ def run_all_tests() -> None:
     test_season_color_alignment()
     test_persistence_cycle()
     test_persistence_preserves_clock()
+    test_atomic_cycle_requires_inputs()
+    test_atomic_cycle_respects_capacity()
+    test_atomic_cycle_reports_consumption()
     print("All backend tests passed")
 
 
@@ -211,6 +214,82 @@ def test_persistence_preserves_clock() -> None:
         resumed["season_index"] == (after["season_index"] + 1) % len(SeasonClock.SEASON_NAMES)
         and resumed["progress"] < 0.05
     )
+
+
+def test_atomic_cycle_requires_inputs() -> None:
+    ui_bridge.init_game()
+    build_result = ui_bridge.build_building(config.LUMBER_HUT)
+    building_id = build_result["building"]["id"]
+    state = get_game_state()
+
+    state.inventory.set_amount(Resource.WOOD, 1.0)
+    state.inventory.set_amount(Resource.GOLD, 10.0)
+    ui_bridge.assign_workers(building_id, 2)
+
+    for _ in range(10):
+        ui_bridge.tick(1.0)
+
+    report = state.last_production_reports.get(building_id)
+    assert report is not None
+    assert report["status"] == "stalled"
+    assert report["reason"] == "missing_input"
+    assert not report["consumed"], "No resources should be consumed when stalled"
+    assert not report["produced"], "No outputs should be generated without inputs"
+    assert math.isclose(state.inventory.get_amount(Resource.WOOD), 1.0, rel_tol=1e-6)
+
+
+def test_atomic_cycle_respects_capacity() -> None:
+    ui_bridge.init_game()
+    build_result = ui_bridge.build_building(config.WOODCUTTER_CAMP)
+    building_id = build_result["building"]["id"]
+    state = get_game_state()
+
+    ui_bridge.assign_workers(building_id, 3)
+    current = state.inventory.get_amount(Resource.WOOD)
+    state.inventory.set_capacity(Resource.WOOD, current)
+
+    for _ in range(10):
+        ui_bridge.tick(1.0)
+
+    report = state.last_production_reports.get(building_id)
+    assert report is not None
+    assert report["status"] == "stalled"
+    assert report["reason"] == "no_capacity"
+    assert not report["produced"], "Outputs should not be produced when capacity is full"
+    assert math.isclose(state.inventory.get_amount(Resource.WOOD), current, rel_tol=1e-6)
+
+
+def test_atomic_cycle_reports_consumption() -> None:
+    ui_bridge.init_game()
+    build_result = ui_bridge.build_building(config.LUMBER_HUT)
+    building_id = build_result["building"]["id"]
+    state = get_game_state()
+
+    ui_bridge.assign_workers(building_id, 2)
+    state.inventory.set_amount(Resource.WOOD, 20.0)
+    initial_wood = state.inventory.get_amount(Resource.WOOD)
+    initial_gold = state.inventory.get_amount(Resource.GOLD)
+
+    ui_bridge.tick(4.0)
+
+    report = state.last_production_reports.get(building_id)
+    assert report is not None
+    assert report["status"] == "produced"
+
+    consumed = report["consumed"]
+    produced = report["produced"]
+    assert math.isclose(consumed[Resource.WOOD.value], 2.0, rel_tol=1e-6)
+    maintenance = config.BUILDING_RECIPES[config.LUMBER_HUT].maintenance[Resource.GOLD]
+    assert math.isclose(consumed[Resource.GOLD.value], maintenance, rel_tol=1e-6)
+    assert math.isclose(produced[Resource.WOOD.value], 3.0, rel_tol=1e-6)
+
+    final_wood = state.inventory.get_amount(Resource.WOOD)
+    final_gold = state.inventory.get_amount(Resource.GOLD)
+    expected_wood = initial_wood - consumed[Resource.WOOD.value] + produced[Resource.WOOD.value]
+    expected_gold = initial_gold - consumed[Resource.GOLD.value]
+    assert math.isclose(final_wood, expected_wood, rel_tol=1e-6)
+    assert math.isclose(final_gold, expected_gold, rel_tol=1e-6)
+
 
 if __name__ == "__main__":
     run_all_tests()
