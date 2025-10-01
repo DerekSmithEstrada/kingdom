@@ -21,6 +21,7 @@ def save_game(path: str) -> None:
         "version": SAVE_VERSION,
         "season": game_state.season,
         "season_time_left": game_state.season_time_left_sec,
+        "clock": game_state.season_clock.export_state(),
         "inventory": game_state.inventory.bulk_export(),
         "workers": {
             "total": game_state.worker_pool.total_workers,
@@ -47,11 +48,14 @@ def load_game(path: str) -> None:
     game_state = get_game_state()
     game_state.reset()
 
-    season = str(data.get("season", game_state.season))
-    time_left = float(data.get("season_time_left", game_state.season_time_left_sec))
-    game_state.season_clock.load(season, time_left)
-    game_state.season = game_state.season_clock.get_current_season()
-    game_state.season_time_left_sec = game_state.season_clock.get_time_left()
+    clock_data = data.get("clock")
+    if isinstance(clock_data, dict):
+        game_state.season_clock.load(clock_data)
+    else:
+        season = str(data.get("season", game_state.season))
+        time_left = float(data.get("season_time_left", game_state.season_time_left_sec))
+        game_state.season_clock.load(season, time_left)
+    game_state._sync_season_state()
 
     inventory_data = data.get("inventory", {})
     quantities = inventory_data.get("quantities", {})

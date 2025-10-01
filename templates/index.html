@@ -2,8 +2,16 @@
 {% block content %}
 <header class="bg-slate-800/80 backdrop-blur border-b border-slate-700">
   <div class="max-w-6xl mx-auto px-4 py-4">
-    <h1 class="text-2xl font-semibold tracking-wide mb-4">Idle Village Overview</h1>
-    <div class="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <h1 class="text-2xl font-semibold tracking-wide">Idle Village Overview</h1>
+      <div id="season-bar" class="season-bar">
+        <span id="season-label" class="season-label">Season</span>
+        <div class="season-track" aria-hidden="true">
+          <div id="season-fill" class="season-fill"></div>
+        </div>
+      </div>
+    </div>
+    <div class="grid grid-cols-2 gap-3 mt-4 sm:grid-cols-4 lg:grid-cols-8">
       <div class="chip" data-resource="happiness">😊 Happiness <span class="value">82%</span></div>
       <div class="chip" data-resource="population">👤 Population <span class="value">15</span></div>
       <div class="chip" data-resource="gold">🪙 Gold <span class="value">320</span></div>

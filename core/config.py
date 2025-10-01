@@ -96,10 +96,10 @@ STARTING_RESOURCES: Dict[Resource, float] = {
 }
 
 SEASON_MODIFIERS: Dict[str, Dict[str, float]] = {
-    "primavera": {"global": 1.0, WHEAT_FARM: 1.05},
-    "verano": {"global": 1.0, WHEAT_FARM: 1.1},
-    "otoño": {"global": 1.0, BREWERY: 1.05},
-    "invierno": {"global": 0.95},
+    "Spring": {"global": 1.0, WHEAT_FARM: 1.05},
+    "Summer": {"global": 1.0, WHEAT_FARM: 1.1},
+    "Autumn": {"global": 1.0, BREWERY: 1.05},
+    "Winter": {"global": 0.95},
 }
 
 NOTIFICATION_QUEUE_LIMIT = 50

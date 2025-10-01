@@ -8,6 +8,11 @@ from core.persistence import load_game as core_load_game, save_game as core_save
 from core.resources import Resource
 
 
+def _season_snapshot(state=None) -> Dict[str, object]:
+    game_state = state or get_game_state()
+    return game_state.season_clock.to_dict()
+
+
 # ---------------------------------------------------------------------------
 # Initialisation and ticking
 
@@ -17,7 +22,7 @@ def init_game() -> Dict[str, object]:
 
     state = get_game_state()
     state.reset()
-    return {"ok": True}
+    return {"ok": True, "season": _season_snapshot(state)}
 
 
 def tick(dt: float) -> Dict[str, object]:
@@ -25,7 +30,7 @@ def tick(dt: float) -> Dict[str, object]:
 
     state = get_game_state()
     state.tick(max(0.0, float(dt)))
-    return {"ok": True}
+    return {"ok": True, "season": _season_snapshot(state)}
 
 
 # ---------------------------------------------------------------------------
