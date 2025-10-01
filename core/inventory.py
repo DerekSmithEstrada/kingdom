@@ -10,6 +10,13 @@ Notifier = Optional[Callable[[str], None]]
 
 
 @dataclass
+class Reservation:
+    inventory: "Inventory"
+    resources: Dict[Resource, float]
+    active: bool = True
+
+
+@dataclass
 class Inventory:
     """Represents resource storage and capacities."""
 
@@ -20,6 +27,7 @@ class Inventory:
     def __post_init__(self) -> None:
         for resource in ALL_RESOURCES:
             self.quantities.setdefault(resource, 0.0)
+        self._reserved: Dict[Resource, float] = {resource: 0.0 for resource in ALL_RESOURCES}
 
     # Utility methods -------------------------------------------------
     def _notify(self, message: str) -> None:
@@ -55,16 +63,68 @@ class Inventory:
     def set_amount(self, resource: Resource, amount: float) -> None:
         self.quantities[resource] = max(0.0, amount)
 
-    def has(self, requirements: Dict[Resource, float]) -> bool:
-        return all(self.get_amount(res) + 1e-9 >= amount for res, amount in requirements.items())
+    def _reserved_amount(self, resource: Resource) -> float:
+        return self._reserved.get(resource, 0.0)
 
-    def consume(self, resources: Dict[Resource, float]) -> bool:
-        if not self.has(resources):
-            return False
+    def _available_amount(self, resource: Resource) -> float:
+        return max(0.0, self.get_amount(resource) - self._reserved_amount(resource))
+
+    def has(self, requirements: Dict[Resource, float]) -> bool:
+        return all(self._available_amount(res) + 1e-9 >= amount for res, amount in requirements.items())
+
+    def reserve(self, resources: Dict[Resource, float]) -> Optional[Reservation]:
+        normalized: Dict[Resource, float] = {}
         for resource, amount in resources.items():
             if amount <= 0:
                 continue
-            self.quantities[resource] = max(0.0, self.quantities.get(resource, 0.0) - amount)
+            normalized[resource] = float(amount)
+
+        if not normalized:
+            return Reservation(self, {}, active=True)
+
+        if not self.has(normalized):
+            return None
+
+        for resource, amount in normalized.items():
+            self._reserved[resource] = self._reserved_amount(resource) + amount
+
+        return Reservation(self, normalized, active=True)
+
+    def _release_reservation(self, reservation: Reservation) -> None:
+        for resource, amount in reservation.resources.items():
+            self._reserved[resource] = max(
+                0.0, self._reserved_amount(resource) - amount
+            )
+
+    def commit(self, reservation: Reservation) -> bool:
+        if reservation.inventory is not self or not reservation.active:
+            return False
+
+        # Consume the previously reserved quantities.
+        for resource, amount in reservation.resources.items():
+            if amount <= 0:
+                continue
+            self.quantities[resource] = max(
+                0.0, self.quantities.get(resource, 0.0) - amount
+            )
+
+        self._release_reservation(reservation)
+        reservation.active = False
+        return True
+
+    def rollback(self, reservation: Reservation) -> bool:
+        if reservation.inventory is not self or not reservation.active:
+            return False
+
+        self._release_reservation(reservation)
+        reservation.active = False
+        return True
+
+    def consume(self, resources: Dict[Resource, float]) -> bool:
+        reservation = self.reserve(resources)
+        if reservation is None:
+            return False
+        self.commit(reservation)
         return True
 
     def can_add(self, resources: Dict[Resource, float]) -> bool:
@@ -79,6 +139,9 @@ class Inventory:
             if self.quantities.get(resource, 0.0) + amount > capacity + 1e-9:
                 return False
         return True
+
+    def space_for(self, resources: Dict[Resource, float]) -> bool:
+        return self.can_add(resources)
 
     def add(self, resources: Dict[Resource, float]) -> Dict[Resource, float]:
         residual: Dict[Resource, float] = {}
