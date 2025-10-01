@@ -77,18 +77,19 @@ class GameState:
         self.trade_manager.tick(dt, self.inventory, self.add_notification)
 
         for building in list(self.buildings.values()):
-            modifier = self.get_production_modifier(building)
-            building.tick(dt, self.inventory, self.add_notification, modifier)
+            modifiers = self.get_production_modifiers(building)
+            building.tick(dt, self.inventory, self.add_notification, modifiers)
 
-    def get_production_modifier(self, building: Building) -> float:
+    def get_production_modifiers(self, building: Building) -> Dict[str, float]:
         season_mod = config.SEASON_MODIFIERS.get(self.season, {})
-        modifier = float(season_mod.get("global", 1.0))
-        modifier *= float(season_mod.get(building.type_key, 1.0))
-        return modifier
+        return {
+            "global": float(season_mod.get("global", 1.0)),
+            building.type_key: float(season_mod.get(building.type_key, 1.0)),
+        }
 
     # ------------------------------------------------------------------
     def build_building(self, type_key: str) -> Building:
-        if type_key not in config.RECETAS:
+        if type_key not in config.BUILDING_RECIPES:
             raise ValueError(f"Tipo de edificio desconocido: {type_key}")
         cost = config.COSTOS_CONSTRUCCION.get(type_key, {})
         missing = self._missing_resources(cost)

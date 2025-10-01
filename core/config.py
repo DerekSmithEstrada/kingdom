@@ -1,9 +1,10 @@
 """Centralised configuration for the management game backend."""
 from __future__ import annotations
 
-from typing import Dict
+from dataclasses import dataclass, field
+from typing import Dict, Mapping, Optional
 
-from .resources import Resource
+from .resources import Resource, normalise_mapping
 
 # Building identifiers used across the backend.
 WOODCUTTER_CAMP = "woodcutter_camp"
@@ -28,42 +29,73 @@ COSTOS_CONSTRUCCION: Dict[str, Dict[Resource, float]] = {
     BREWERY: {Resource.WOOD: 30, Resource.STONE: 20, Resource.GRAIN: 10},
 }
 
-RECETAS: Dict[str, Dict[str, Dict[Resource, float] | float | int]] = {
-    WOODCUTTER_CAMP: {
-        "inputs": {},
-        "outputs": {Resource.WOOD: 1},
-        "cycle_time": 3.0,
-        "max_workers": 3,
-        "maintenance_per_min": {Resource.GOLD: 0.1},
-    },
-    LUMBER_HUT: {
-        "inputs": {Resource.WOOD: 2},
-        "outputs": {Resource.WOOD: 3},
-        "cycle_time": 4.0,
-        "max_workers": 2,
-        "maintenance_per_min": {Resource.GOLD: 0.1},
-    },
-    STONE_QUARRY: {
-        "inputs": {},
-        "outputs": {Resource.STONE: 1},
-        "cycle_time": 5.0,
-        "max_workers": 3,
-        "maintenance_per_min": {Resource.GOLD: 0.2},
-    },
-    WHEAT_FARM: {
-        "inputs": {Resource.WATER: 1},
-        "outputs": {Resource.GRAIN: 2},
-        "cycle_time": 5.0,
-        "max_workers": 3,
-        "maintenance_per_min": {Resource.GOLD: 0.15},
-    },
-    BREWERY: {
-        "inputs": {Resource.GRAIN: 2, Resource.HOPS: 1, Resource.WATER: 1},
-        "outputs": {Resource.GOLD: 3},
-        "cycle_time": 6.0,
-        "max_workers": 2,
-        "maintenance_per_min": {Resource.GOLD: 0.1},
-    },
+@dataclass(frozen=True)
+class BuildingRecipe:
+    """Structure describing how a building converts resources each cycle."""
+
+    inputs: Mapping[Resource, float]
+    outputs: Mapping[Resource, float]
+    cycle_time: float
+    max_workers: int
+    capacity: Optional[Mapping[Resource, float]] = None
+    maintenance: Mapping[Resource, float] = field(default_factory=dict)
+
+
+def _recipe(
+    *,
+    inputs: Mapping[Resource, float] | None,
+    outputs: Mapping[Resource, float],
+    cycle_time: float,
+    max_workers: int,
+    capacity: Mapping[Resource, float] | None = None,
+    maintenance: Mapping[Resource, float] | None = None,
+) -> BuildingRecipe:
+    return BuildingRecipe(
+        inputs=normalise_mapping(inputs or {}),
+        outputs=normalise_mapping(outputs),
+        cycle_time=float(cycle_time),
+        max_workers=int(max_workers),
+        capacity=None if capacity is None else normalise_mapping(capacity),
+        maintenance=normalise_mapping(maintenance or {}),
+    )
+
+
+BUILDING_RECIPES: Dict[str, BuildingRecipe] = {
+    WOODCUTTER_CAMP: _recipe(
+        inputs={},
+        outputs={Resource.WOOD: 1},
+        cycle_time=3.0,
+        max_workers=3,
+        maintenance={Resource.GOLD: 0.005},
+    ),
+    LUMBER_HUT: _recipe(
+        inputs={Resource.WOOD: 2},
+        outputs={Resource.WOOD: 3},
+        cycle_time=4.0,
+        max_workers=2,
+        maintenance={Resource.GOLD: 0.006666666666666667},
+    ),
+    STONE_QUARRY: _recipe(
+        inputs={},
+        outputs={Resource.STONE: 1},
+        cycle_time=5.0,
+        max_workers=3,
+        maintenance={Resource.GOLD: 0.016666666666666666},
+    ),
+    WHEAT_FARM: _recipe(
+        inputs={Resource.WATER: 1},
+        outputs={Resource.GRAIN: 2},
+        cycle_time=5.0,
+        max_workers=3,
+        maintenance={Resource.GOLD: 0.0125},
+    ),
+    BREWERY: _recipe(
+        inputs={Resource.GRAIN: 2, Resource.HOPS: 1, Resource.WATER: 1},
+        outputs={Resource.GOLD: 3},
+        cycle_time=6.0,
+        max_workers=2,
+        maintenance={Resource.GOLD: 0.01},
+    ),
 }
 
 TRADE_DEFAULTS: Dict[Resource, Dict[str, float | str]] = {
