@@ -64,6 +64,12 @@
       { id: "tools", label: "Tools", export: 2, import: 1, icon: "🛠️" },
       { id: "wheat", label: "Wheat", export: 5, import: 6, icon: "🌾" },
     ],
+    season: {
+      season_name: "Spring",
+      season_index: 0,
+      progress: 0,
+      color_hex: "#38BDF8",
+    },
   };
 
   function clone(value) {
@@ -89,6 +95,9 @@
         trade: Array.isArray(parsed.trade) && parsed.trade.length
           ? parsed.trade
           : clone(defaultState.trade),
+        season: parsed.season
+          ? { ...defaultState.season, ...parsed.season }
+          : clone(defaultState.season),
       };
     } catch (error) {
       console.warn("Idle Village: failed to load state", error);
@@ -97,6 +106,10 @@
   }
 
   let state = loadState();
+
+  if (!state.season) {
+    state.season = clone(defaultState.season);
+  }
 
   function saveState() {
     try {
@@ -115,6 +128,8 @@
   const jobsList = document.getElementById("jobs-list");
   const tradeList = document.getElementById("trade-list");
   const jobsCountLabel = document.getElementById("jobs-count");
+  const seasonLabel = document.getElementById("season-label");
+  const seasonFill = document.getElementById("season-fill");
 
   function getCapacity(building) {
     return building.built * building.capacityPerBuilding;
@@ -147,6 +162,40 @@
           break;
       }
     });
+  }
+
+  function renderSeason(season) {
+    if (!season || !seasonLabel || !seasonFill) return;
+    if (typeof season.season_name === "string" && season.season_name) {
+      seasonLabel.textContent = season.season_name;
+    }
+    const progress = Math.max(0, Math.min(1, Number(season.progress) || 0));
+    seasonFill.style.width = `${(progress * 100).toFixed(2)}%`;
+    if (typeof season.color_hex === "string" && season.color_hex) {
+      seasonFill.style.backgroundColor = season.color_hex;
+    }
+  }
+
+  function updateSeasonState(season) {
+    if (!season) return;
+    const snapshot = {
+      season_name:
+        typeof season.season_name === "string" && season.season_name
+          ? season.season_name
+          : state.season.season_name,
+      season_index:
+        typeof season.season_index === "number"
+          ? season.season_index
+          : state.season.season_index,
+      progress: Math.max(0, Math.min(1, Number(season.progress) || 0)),
+      color_hex:
+        typeof season.color_hex === "string" && season.color_hex
+          ? season.color_hex
+          : state.season.color_hex,
+    };
+    state.season = snapshot;
+    renderSeason(snapshot);
+    saveState();
   }
 
   function renderBuildings() {
@@ -395,6 +444,61 @@
     }
   }
 
+  async function fetchJson(url, options) {
+    if (typeof fetch !== "function") return null;
+    try {
+      const response = await fetch(url, options);
+      if (!response.ok) {
+        return null;
+      }
+      return await response.json();
+    } catch (error) {
+      return null;
+    }
+  }
+
+  async function loadSeasonFromStateEndpoint() {
+    const payload = await fetchJson("/api/state");
+    if (payload && payload.season) {
+      updateSeasonState(payload.season);
+      return true;
+    }
+    return false;
+  }
+
+  async function initialiseSeasonSync() {
+    const loaded = await loadSeasonFromStateEndpoint();
+    if (loaded) {
+      return;
+    }
+    const initPayload = await fetchJson("/api/init", { method: "POST" });
+    if (initPayload && initPayload.season) {
+      updateSeasonState(initPayload.season);
+    }
+    await loadSeasonFromStateEndpoint();
+  }
+
+  function startSeasonTickLoop() {
+    if (typeof fetch !== "function") return;
+    let ticking = false;
+    const performTick = async () => {
+      if (ticking) {
+        return;
+      }
+      ticking = true;
+      const payload = await fetchJson("/api/tick", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dt: 1 }),
+      });
+      if (payload && payload.season) {
+        updateSeasonState(payload.season);
+      }
+      ticking = false;
+    };
+    setInterval(performTick, 5000);
+  }
+
   function attachAccordion() {
     const triggers = document.querySelectorAll(".accordion-trigger");
     triggers.forEach((trigger, index) => {
@@ -422,4 +526,6 @@
   attachAccordion();
   updateJobsCount();
   updateChips();
+  renderSeason(state.season);
+  initialiseSeasonSync().then(startSeasonTickLoop);
 })();

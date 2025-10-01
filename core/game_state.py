@@ -22,8 +22,7 @@ class GameState:
     def __init__(self) -> None:
         self.notifications: Deque[str] = deque(maxlen=config.NOTIFICATION_QUEUE_LIMIT)
         self.season_clock = SeasonClock()
-        self.season = self.season_clock.get_current_season()
-        self.season_time_left_sec = self.season_clock.get_time_left()
+        self._sync_season_state()
         self.inventory = Inventory()
         self.inventory.set_notifier(self.add_notification)
         self.worker_pool = WorkerPool(config.WORKERS_INICIALES)
@@ -41,8 +40,7 @@ class GameState:
     def reset(self) -> None:
         self.notifications.clear()
         self.season_clock = SeasonClock()
-        self.season = self.season_clock.get_current_season()
-        self.season_time_left_sec = self.season_clock.get_time_left()
+        self._sync_season_state()
         self.inventory = Inventory()
         self.inventory.set_notifier(self.add_notification)
         self._initialise_inventory()
@@ -74,8 +72,7 @@ class GameState:
     # ------------------------------------------------------------------
     def tick(self, dt: float) -> None:
         self.season_clock.update(dt)
-        self.season = self.season_clock.get_current_season()
-        self.season_time_left_sec = self.season_clock.get_time_left()
+        self._sync_season_state()
 
         self.trade_manager.tick(dt, self.inventory, self.add_notification)
 
@@ -160,8 +157,7 @@ class GameState:
     # ------------------------------------------------------------------
     def snapshot_hud(self) -> Dict[str, object]:
         return {
-            "season": self.season,
-            "time_left": self.season_time_left_sec,
+            "season": self.season_snapshot,
             "resources": [
                 {
                     "key": resource.value,
@@ -194,6 +190,12 @@ class GameState:
 
     def inventory_snapshot(self) -> Dict[str, Dict[str, float | None]]:
         return self.inventory.snapshot()
+
+    # ------------------------------------------------------------------
+    def _sync_season_state(self) -> None:
+        self.season_snapshot = self.season_clock.to_dict()
+        self.season = self.season_snapshot["season_name"]
+        self.season_time_left_sec = self.season_clock.get_time_left()
 
 
 def get_game_state() -> GameState:
