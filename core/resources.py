@@ -11,6 +11,10 @@ class Resource(str, Enum):
     WOOD = "WOOD"
     STONE = "STONE"
     GRAIN = "GRAIN"
+    PLANK = "PLANK"
+    TOOLS = "TOOLS"
+    ORE = "ORE"
+    SEEDS = "SEEDS"
     WATER = "WATER"
     GOLD = "GOLD"
     HOPS = "HOPS"
@@ -20,6 +24,10 @@ ALL_RESOURCES: List[Resource] = [
     Resource.WOOD,
     Resource.STONE,
     Resource.GRAIN,
+    Resource.PLANK,
+    Resource.TOOLS,
+    Resource.ORE,
+    Resource.SEEDS,
     Resource.WATER,
     Resource.GOLD,
     Resource.HOPS,

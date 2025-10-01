@@ -174,11 +174,11 @@ def test_season_color_alignment() -> None:
 
 def test_persistence_cycle() -> None:
     ui_bridge.init_game()
-    build_result = ui_bridge.build_building(config.WHEAT_FARM)
+    build_result = ui_bridge.build_building(config.FARMER)
     building_id = build_result["building"]["id"]
     ui_bridge.assign_workers(building_id, 2)
     state = get_game_state()
-    state.inventory.set_amount(Resource.WATER, 50)
+    state.inventory.set_amount(Resource.SEEDS, 50)
     save_path = Path("tests/_tmp_save.json")
     ui_bridge.save_game(str(save_path))
 
@@ -188,7 +188,7 @@ def test_persistence_cycle() -> None:
 
     restored = state.buildings[building_id]
     assert restored.assigned_workers == 2
-    assert state.inventory.get_amount(Resource.WATER) == 50
+    assert state.inventory.get_amount(Resource.SEEDS) == 50
 
 
 def test_persistence_preserves_clock() -> None:
@@ -267,8 +267,10 @@ def test_atomic_cycle_reports_consumption() -> None:
 
     ui_bridge.assign_workers(building_id, 2)
     state.inventory.set_amount(Resource.WOOD, 20.0)
+    state.inventory.set_amount(Resource.PLANK, 0.0)
     initial_wood = state.inventory.get_amount(Resource.WOOD)
     initial_gold = state.inventory.get_amount(Resource.GOLD)
+    initial_planks = state.inventory.get_amount(Resource.PLANK)
 
     ui_bridge.tick(4.0)
 
@@ -281,14 +283,16 @@ def test_atomic_cycle_reports_consumption() -> None:
     assert math.isclose(consumed[Resource.WOOD.value], 2.0, rel_tol=1e-6)
     maintenance = config.BUILDING_RECIPES[config.LUMBER_HUT].maintenance[Resource.GOLD]
     assert math.isclose(consumed[Resource.GOLD.value], maintenance, rel_tol=1e-6)
-    assert math.isclose(produced[Resource.WOOD.value], 3.0, rel_tol=1e-6)
+    assert math.isclose(produced[Resource.PLANK.value], 1.0, rel_tol=1e-6)
 
     final_wood = state.inventory.get_amount(Resource.WOOD)
     final_gold = state.inventory.get_amount(Resource.GOLD)
-    expected_wood = initial_wood - consumed[Resource.WOOD.value] + produced[Resource.WOOD.value]
+    expected_wood = initial_wood - consumed[Resource.WOOD.value]
     expected_gold = initial_gold - consumed[Resource.GOLD.value]
+    expected_planks = initial_planks + produced[Resource.PLANK.value]
     assert math.isclose(final_wood, expected_wood, rel_tol=1e-6)
     assert math.isclose(final_gold, expected_gold, rel_tol=1e-6)
+    assert math.isclose(state.inventory.get_amount(Resource.PLANK), expected_planks, rel_tol=1e-6)
 
 
 if __name__ == "__main__":

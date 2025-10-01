@@ -9,24 +9,24 @@ from .resources import Resource, normalise_mapping
 # Building identifiers used across the backend.
 WOODCUTTER_CAMP = "woodcutter_camp"
 LUMBER_HUT = "lumber_hut"
-STONE_QUARRY = "stone_quarry"
-WHEAT_FARM = "wheat_farm"
-BREWERY = "brewery"
+MINER = "miner"
+FARMER = "farmer"
+ARTISAN = "artisan"
 
 BUILDING_NAMES: Dict[str, str] = {
     WOODCUTTER_CAMP: "Woodcutter Camp",
     LUMBER_HUT: "Lumber Hut",
-    STONE_QUARRY: "Stone Quarry",
-    WHEAT_FARM: "Wheat Farm",
-    BREWERY: "Brewery",
+    MINER: "Miner",
+    FARMER: "Farmer",
+    ARTISAN: "Artisan Workshop",
 }
 
 COSTOS_CONSTRUCCION: Dict[str, Dict[Resource, float]] = {
-    WOODCUTTER_CAMP: {Resource.WOOD: 10, Resource.STONE: 5},
-    LUMBER_HUT: {Resource.WOOD: 25, Resource.STONE: 10},
-    STONE_QUARRY: {Resource.WOOD: 15, Resource.STONE: 10},
-    WHEAT_FARM: {Resource.WOOD: 20, Resource.STONE: 15, Resource.WATER: 10},
-    BREWERY: {Resource.WOOD: 30, Resource.STONE: 20, Resource.GRAIN: 10},
+    WOODCUTTER_CAMP: {Resource.WOOD: 12, Resource.STONE: 4},
+    LUMBER_HUT: {Resource.WOOD: 25, Resource.STONE: 12},
+    MINER: {Resource.WOOD: 18, Resource.STONE: 14},
+    FARMER: {Resource.WOOD: 20, Resource.STONE: 15, Resource.SEEDS: 5},
+    ARTISAN: {Resource.WOOD: 15, Resource.STONE: 20, Resource.PLANK: 4},
 }
 
 @dataclass(frozen=True)
@@ -62,36 +62,41 @@ def _recipe(
 
 BUILDING_RECIPES: Dict[str, BuildingRecipe] = {
     WOODCUTTER_CAMP: _recipe(
+        # 0 input -> 1 Wood per 2s cycle with up to 3 workers.
         inputs={},
         outputs={Resource.WOOD: 1},
-        cycle_time=3.0,
+        cycle_time=2.0,
         max_workers=3,
         maintenance={Resource.GOLD: 0.005},
     ),
     LUMBER_HUT: _recipe(
+        # 2 Wood -> 1 Plank per 4s cycle; halved throughput if input missing.
         inputs={Resource.WOOD: 2},
-        outputs={Resource.WOOD: 3},
+        outputs={Resource.PLANK: 1},
         cycle_time=4.0,
         max_workers=2,
         maintenance={Resource.GOLD: 0.006666666666666667},
     ),
-    STONE_QUARRY: _recipe(
+    MINER: _recipe(
+        # 0 input -> 1 Stone + 0.2 Ore per 5s cycle.
         inputs={},
-        outputs={Resource.STONE: 1},
+        outputs={Resource.STONE: 1, Resource.ORE: 0.2},
         cycle_time=5.0,
         max_workers=3,
         maintenance={Resource.GOLD: 0.016666666666666666},
     ),
-    WHEAT_FARM: _recipe(
-        inputs={Resource.WATER: 1},
-        outputs={Resource.GRAIN: 2},
-        cycle_time=5.0,
+    FARMER: _recipe(
+        # 1 Seed -> 3 Grain per 8s cycle after sowing.
+        inputs={Resource.SEEDS: 1},
+        outputs={Resource.GRAIN: 3},
+        cycle_time=8.0,
         max_workers=3,
         maintenance={Resource.GOLD: 0.0125},
     ),
-    BREWERY: _recipe(
-        inputs={Resource.GRAIN: 2, Resource.HOPS: 1, Resource.WATER: 1},
-        outputs={Resource.GOLD: 3},
+    ARTISAN: _recipe(
+        # 1 Plank + 1 Stone -> 1 Tool per 6s cycle; stalls if any input missing.
+        inputs={Resource.PLANK: 1, Resource.STONE: 1},
+        outputs={Resource.TOOLS: 1},
         cycle_time=6.0,
         max_workers=2,
         maintenance={Resource.GOLD: 0.01},
@@ -101,7 +106,11 @@ BUILDING_RECIPES: Dict[str, BuildingRecipe] = {
 TRADE_DEFAULTS: Dict[Resource, Dict[str, float | str]] = {
     Resource.WOOD: {"mode": "pause", "rate": 0.0, "price": 1.0},
     Resource.STONE: {"mode": "pause", "rate": 0.0, "price": 1.5},
+    Resource.ORE: {"mode": "pause", "rate": 0.0, "price": 2.5},
     Resource.GRAIN: {"mode": "pause", "rate": 0.0, "price": 2.0},
+    Resource.PLANK: {"mode": "pause", "rate": 0.0, "price": 3.0},
+    Resource.TOOLS: {"mode": "pause", "rate": 0.0, "price": 6.0},
+    Resource.SEEDS: {"mode": "pause", "rate": 0.0, "price": 1.8},
     Resource.WATER: {"mode": "pause", "rate": 0.0, "price": 0.5},
     Resource.GOLD: {"mode": "pause", "rate": 0.0, "price": 1.0},
     Resource.HOPS: {"mode": "pause", "rate": 0.0, "price": 2.5},
@@ -110,7 +119,11 @@ TRADE_DEFAULTS: Dict[Resource, Dict[str, float | str]] = {
 CAPACIDADES: Dict[Resource, float] = {
     Resource.WOOD: 500,
     Resource.STONE: 500,
+    Resource.ORE: 200,
     Resource.GRAIN: 400,
+    Resource.PLANK: 250,
+    Resource.TOOLS: 150,
+    Resource.SEEDS: 150,
     Resource.WATER: 400,
     Resource.GOLD: 1000,
     Resource.HOPS: 200,
@@ -119,19 +132,22 @@ CAPACIDADES: Dict[Resource, float] = {
 WORKERS_INICIALES: int = 20
 
 STARTING_RESOURCES: Dict[Resource, float] = {
-    Resource.WOOD: 50,
-    Resource.STONE: 30,
-    Resource.GRAIN: 20,
+    Resource.WOOD: 60,
+    Resource.STONE: 35,
+    Resource.ORE: 5,
+    Resource.GRAIN: 25,
+    Resource.SEEDS: 15,
+    Resource.PLANK: 10,
     Resource.WATER: 40,
     Resource.GOLD: 100,
     Resource.HOPS: 10,
 }
 
 SEASON_MODIFIERS: Dict[str, Dict[str, float]] = {
-    "Spring": {"global": 1.0, WHEAT_FARM: 1.05},
-    "Summer": {"global": 1.0, WHEAT_FARM: 1.1},
-    "Autumn": {"global": 1.0, BREWERY: 1.05},
-    "Winter": {"global": 0.95},
+    "Spring": {"global": 1.0, FARMER: 1.05},
+    "Summer": {"global": 1.0, FARMER: 1.1},
+    "Autumn": {"global": 1.0, ARTISAN: 1.05},
+    "Winter": {"global": 0.95, MINER: 0.9},
 }
 
 NOTIFICATION_QUEUE_LIMIT = 50
