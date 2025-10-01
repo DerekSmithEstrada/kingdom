@@ -83,6 +83,23 @@ def test_trade_operations() -> None:
     assert channel.mode == "pause", "Export should pause when stock remains at zero"
 
 
+def test_import_refunds_when_capacity_full() -> None:
+    ui_bridge.init_game()
+    state = get_game_state()
+    state.inventory.set_amount(Resource.HOPS, 0)
+    state.inventory.set_capacity(Resource.HOPS, 0)
+    state.inventory.set_amount(Resource.GOLD, 100)
+
+    gold_before = state.inventory.get_amount(Resource.GOLD)
+
+    ui_bridge.set_trade_mode(Resource.HOPS.value, "import")
+    ui_bridge.set_trade_rate(Resource.HOPS.value, 60)
+    ui_bridge.tick(1.0)
+
+    gold_after = state.inventory.get_amount(Resource.GOLD)
+    assert abs(gold_after - gold_before) <= 1e-6, "Gold should not decrease when import fails"
+
+
 def test_season_rotation() -> None:
     ui_bridge.init_game()
     state = get_game_state()

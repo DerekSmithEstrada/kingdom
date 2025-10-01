@@ -51,7 +51,21 @@ class TradeChannel:
             )
         if cost > 0:
             inventory.consume({Resource.GOLD: cost})
-        inventory.add({self.resource: amount})
+        residual = inventory.add({self.resource: amount})
+        leftover = residual.get(self.resource, 0.0)
+        if leftover > 1e-6:
+            refund = leftover * self.price_per_unit
+            if refund > 0:
+                inventory.add({Resource.GOLD: refund})
+            if leftover >= amount - 1e-6:
+                self.mode = "pause"
+                notify(
+                    f"Comercio de {self.resource.value} pausado: almacén sin espacio"
+                )
+            else:
+                notify(
+                    f"Comercio de {self.resource.value}: importación limitada por capacidad"
+                )
 
     def _handle_export(self, amount: float, inventory: Inventory, notify) -> None:
         available = inventory.get_amount(self.resource)
