@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Deque, Dict, List, Optional
+from typing import Deque, Dict, List, Optional, Tuple
 
 from . import config
 from .buildings import Building, build_from_config
@@ -175,7 +175,28 @@ class GameState:
         }
 
     def snapshot_buildings(self) -> List[Dict[str, object]]:
-        return [building.to_snapshot() for building in self.buildings.values()]
+        return [self._build_building_snapshot(building) for building in self.buildings.values()]
+
+    def snapshot_building(self, building_id: int) -> Dict[str, object]:
+        building = self.buildings.get(building_id)
+        if building is None:
+            raise ValueError("Edificio inexistente")
+        return self._build_building_snapshot(building)
+
+    def snapshot_state(self) -> Dict[str, object]:
+        return {
+            "season": self.season_clock.to_dict(),
+            "buildings": self.snapshot_buildings(),
+            "inventory": self.inventory_snapshot(),
+            "jobs": self.snapshot_jobs(),
+            "trade": self.snapshot_trade(),
+        }
+
+    def production_reports_snapshot(self) -> Dict[int, Dict[str, object]]:
+        snapshot: Dict[int, Dict[str, object]] = {}
+        for building in self.buildings.values():
+            snapshot[building.id] = self._building_last_report(building)
+        return snapshot
 
     def snapshot_jobs(self) -> Dict[str, object]:
         return {
@@ -201,6 +222,70 @@ class GameState:
         self.season_snapshot = self.season_clock.to_dict()
         self.season = self.season_snapshot["season_name"]
         self.season_time_left_sec = self.season_clock.get_time_left()
+
+    # ------------------------------------------------------------------
+    def _build_building_snapshot(self, building: Building) -> Dict[str, object]:
+        snapshot = building.to_snapshot()
+        modifiers = self.get_production_modifiers(building)
+        effective_rate = building.effective_rate(building.assigned_workers, modifiers)
+        can_produce, reason = self._building_can_produce(building, effective_rate)
+        pending_eta = self._building_pending_eta(building, effective_rate)
+        last_report = self._building_last_report(building)
+
+        snapshot.update(
+            {
+                "effective_rate": effective_rate,
+                "can_produce": can_produce,
+                "reason": reason,
+                "pending_eta": pending_eta,
+                "last_report": last_report,
+                "production_report": last_report,
+            }
+        )
+        return snapshot
+
+    def _building_last_report(self, building: Building) -> Dict[str, object]:
+        report = self.last_production_reports.get(building.id, building.production_report)
+        return {
+            "status": report.get("status"),
+            "reason": report.get("reason"),
+            "consumed": dict(report.get("consumed", {})),
+            "produced": dict(report.get("produced", {})),
+        }
+
+    def _building_pending_eta(self, building: Building, effective_rate: float) -> Optional[float]:
+        if effective_rate <= 0:
+            return None
+        remaining_progress = max(0.0, building.cycle_time_sec - building.cycle_progress)
+        return remaining_progress / effective_rate if remaining_progress > 0 else 0.0
+
+    def _building_can_produce(
+        self, building: Building, effective_rate: float
+    ) -> Tuple[bool, Optional[str]]:
+        inactive_reason = building._inactive_reason()
+        if inactive_reason:
+            return False, inactive_reason
+
+        if effective_rate <= 0:
+            return False, "inactive"
+
+        maintenance = dict(building.maintenance_per_cycle)
+        inputs = dict(building.inputs_per_cycle)
+
+        if maintenance and not self.inventory.has(maintenance):
+            return False, "missing_maintenance"
+        if inputs and not self.inventory.has(inputs):
+            return False, "missing_input"
+
+        combined = Building._combine_resources(inputs, maintenance)
+        if combined and not self.inventory.has(combined):
+            return False, "missing_input"
+
+        outputs = dict(building.outputs_per_cycle)
+        if outputs and not self.inventory.can_add(outputs):
+            return False, "no_capacity"
+
+        return True, None
 
 
 def get_game_state() -> GameState:
