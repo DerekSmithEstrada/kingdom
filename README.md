@@ -60,6 +60,11 @@ Para aislar el conjunto básico también puedes correr directamente el módulo d
 python tests/test_backend.py
 ```
 
+### Verificación automática
+
+- Ejecuta `pytest -q` para correr la verificación E2E de la API que valida el arranque limpio y la primera producción de madera.
+- Abre `http://127.0.0.1:5000/?verify=1` con la caché del navegador limpia para activar el modo de verificación visual: se mostrará un overlay con los checks y los detalles quedarán registrados en `window.__verifyLog`.
+
 ### Integración con futuras rutas HTTP
 
 - Importa las funciones necesarias desde `api.ui_bridge` dentro de las nuevas rutas Flask para reutilizar la simulación existente.
