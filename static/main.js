@@ -1,6 +1,223 @@
 (function () {
   const STORAGE_KEY = "idle-village-state-v1";
 
+  const resourceIconMap = {
+    gold: "🪙",
+    wood: "🪵",
+    planks: "🪚",
+    plank: "🪚",
+    stone: "🪨",
+    tools: "🛠️",
+    wheat: "🌾",
+    grain: "🌾",
+    ore: "⛏️",
+    seeds: "🌱",
+    water: "💧",
+    hops: "🍺",
+    happiness: "😊",
+  };
+
+  const numberFormatter = new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+  });
+
+  function normaliseResourceMap(value) {
+    if (!value || typeof value !== "object") {
+      return {};
+    }
+    const entries = Array.isArray(value) ? value : Object.entries(value);
+    return entries.reduce((acc, entry) => {
+      const [rawKey, rawAmount] = entry;
+      if (typeof rawKey !== "string") {
+        return acc;
+      }
+      const key = rawKey.toLowerCase();
+      const amount = Number(rawAmount);
+      acc[key] = Number.isFinite(amount) ? amount : 0;
+      return acc;
+    }, {});
+  }
+
+  function normaliseReport(report) {
+    if (!report || typeof report !== "object") {
+      return {
+        status: null,
+        reason: null,
+        detail: null,
+        consumed: {},
+        produced: {},
+      };
+    }
+    return {
+      status: typeof report.status === "string" ? report.status : null,
+      reason: typeof report.reason === "string" ? report.reason : null,
+      detail: report.detail === undefined ? null : report.detail,
+      consumed: normaliseResourceMap(report.consumed),
+      produced: normaliseResourceMap(report.produced),
+    };
+  }
+
+  function normaliseBuilding(building) {
+    if (!building || typeof building !== "object") {
+      return null;
+    }
+    const inputs = normaliseResourceMap(
+      building.inputs || building.input || building.inputs_per_cycle
+    );
+    const outputs = normaliseResourceMap(
+      building.outputs || building.output || building.outputs_per_cycle
+    );
+    const effectiveRate = Number(building.effective_rate);
+    const cycleTime = Number(
+      building.cycle_time || building.cycle_time_sec || building.cycleTime
+    );
+    const pendingEta = Number(building.pending_eta);
+    const activeValue = Number(building.active);
+    const activeWorkers = Number.isFinite(activeValue)
+      ? activeValue
+      : Number.isFinite(Number(building.active_workers))
+      ? Number(building.active_workers)
+      : Number.isFinite(Number(building.assigned_workers))
+      ? Number(building.assigned_workers)
+      : 0;
+    const builtValue = Number(building.built);
+    const builtCount = Number.isFinite(builtValue)
+      ? builtValue
+      : Number.isFinite(Number(building.built_count))
+      ? Number(building.built_count)
+      : 0;
+    const capacityValue = Number(building.capacityPerBuilding);
+    const maxWorkersValue = Number(building.max_workers);
+    const derivedCapacity = Number.isFinite(capacityValue) && capacityValue > 0
+      ? capacityValue
+      : Number.isFinite(maxWorkersValue) && maxWorkersValue > 0
+      ? maxWorkersValue
+      : capacityValue;
+    const typeKey =
+      typeof building.type === "string"
+        ? building.type
+        : typeof building.type_key === "string"
+        ? building.type_key
+        : typeof building.typeKey === "string"
+        ? building.typeKey
+        : typeof building.id === "string"
+        ? building.id
+        : null;
+    const normalised = {
+      inputs,
+      outputs,
+      can_produce:
+        typeof building.can_produce === "boolean" ? building.can_produce : false,
+      reason: typeof building.reason === "string" ? building.reason : null,
+      effective_rate: Number.isFinite(effectiveRate) ? effectiveRate : 0,
+      pending_eta: Number.isFinite(pendingEta) ? pendingEta : null,
+      last_report: normaliseReport(building.last_report || building.production_report),
+      cycle_time: Number.isFinite(cycleTime) ? cycleTime : 60,
+      type: typeKey,
+      active: Number.isFinite(activeWorkers) ? activeWorkers : 0,
+      built: Number.isFinite(builtCount) ? builtCount : 0,
+      capacityPerBuilding:
+        Number.isFinite(derivedCapacity) && derivedCapacity > 0
+          ? derivedCapacity
+          : typeof building.capacityPerBuilding === "number"
+          ? building.capacityPerBuilding
+          : 0,
+    };
+
+    return { ...building, ...normalised };
+  }
+
+  function normaliseState(snapshot) {
+    const next = { ...snapshot };
+    next.buildings = Array.isArray(snapshot.buildings)
+      ? snapshot.buildings
+          .map((building) => normaliseBuilding(building))
+          .filter(Boolean)
+      : [];
+    return next;
+  }
+
+  function formatAmount(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return "0";
+    }
+    return numberFormatter.format(numeric);
+  }
+
+  function formatResourceKey(key) {
+    if (typeof key !== "string") {
+      return "";
+    }
+    return key
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (character) => character.toUpperCase());
+  }
+
+  function renderResourceList(resources, effectiveRate, cycleTime) {
+    const entries = Object.entries(resources || {}).filter(([, amount]) => {
+      const numeric = Number(amount);
+      return Number.isFinite(numeric) && numeric !== 0;
+    });
+    if (!entries.length) {
+      return '<span class="io-empty">—</span>';
+    }
+
+    const cyclesPerMinute =
+      cycleTime > 0 ? Math.max(0, effectiveRate) * (60 / cycleTime) : 0;
+    const items = entries
+      .map(([resource, amount]) => {
+        const perCycle = Number(amount) || 0;
+        const perMinute = perCycle * cyclesPerMinute;
+        const tooltip = `${formatResourceKey(
+          resource
+        )}: ${formatAmount(perCycle)} por ciclo • ${formatAmount(
+          perMinute
+        )} por minuto`;
+        const icon = resourceIconMap[resource] || "📦";
+        return `
+          <li class="io-item" title="${tooltip}">
+            <span class="io-icon" role="img" aria-hidden="true">${icon}</span>
+            <span class="io-amount">${formatAmount(perCycle)}</span>
+          </li>
+        `.trim();
+      })
+      .join("");
+    return `<ul class="io-list">${items}</ul>`;
+  }
+
+  function renderIoSection(building) {
+    const consumes = renderResourceList(
+      building.inputs,
+      building.effective_rate,
+      building.cycle_time
+    );
+    const produces = renderResourceList(
+      building.outputs,
+      building.effective_rate,
+      building.cycle_time
+    );
+    return `
+      <div class="io-section">
+        <div class="io-row">
+          <span class="io-label">Consumes</span>
+          <div class="io-values">${consumes}</div>
+        </div>
+        <div class="io-row">
+          <span class="io-label">Produces</span>
+          <div class="io-values">${produces}</div>
+        </div>
+      </div>
+    `.trim();
+  }
+
+  function logState() {
+    if (typeof console !== "undefined" && typeof console.log === "function") {
+      console.log("Idle Village state", state);
+    }
+  }
+
   const defaultState = {
     resources: {
       happiness: 82,
@@ -17,39 +234,99 @@
     buildings: [
       {
         id: "woodcutter-camp",
+        type: "woodcutter_camp",
         name: "Woodcutter Camp",
         category: "wood",
         built: 1,
         active: 1,
         capacityPerBuilding: 2,
         icon: "🪓",
+        inputs: {},
+        outputs: { wood: 1 },
+        effective_rate: 1,
+        can_produce: true,
+        reason: null,
+        pending_eta: null,
+        last_report: {
+          status: "running",
+          reason: null,
+          detail: null,
+          consumed: {},
+          produced: { wood: 1 },
+        },
+        cycle_time: 2,
       },
       {
         id: "lumber-hut",
+        type: "lumber_hut",
         name: "Lumber Hut",
         category: "wood",
         built: 2,
         active: 4,
         capacityPerBuilding: 2,
         icon: "🏚️",
+        inputs: { wood: 2 },
+        outputs: { planks: 1 },
+        effective_rate: 0.5,
+        can_produce: true,
+        reason: null,
+        pending_eta: null,
+        last_report: {
+          status: "running",
+          reason: null,
+          detail: null,
+          consumed: { wood: 2 },
+          produced: { planks: 1 },
+        },
+        cycle_time: 4,
       },
       {
         id: "stone-quarry",
+        type: "miner",
         name: "Stone Quarry",
         category: "stone",
         built: 1,
         active: 3,
         capacityPerBuilding: 3,
         icon: "⛏️",
+        inputs: {},
+        outputs: { stone: 1 },
+        effective_rate: 0.75,
+        can_produce: true,
+        reason: null,
+        pending_eta: null,
+        last_report: {
+          status: "running",
+          reason: null,
+          detail: null,
+          consumed: {},
+          produced: { stone: 1 },
+        },
+        cycle_time: 5,
       },
       {
         id: "wheat-farm",
+        type: "farmer",
         name: "Wheat Farm",
         category: "crops",
         built: 0,
         active: 0,
         capacityPerBuilding: 2,
         icon: "🌾",
+        inputs: { seeds: 1 },
+        outputs: { wheat: 3 },
+        effective_rate: 0,
+        can_produce: false,
+        reason: "inactive",
+        pending_eta: null,
+        last_report: {
+          status: "inactive",
+          reason: "inactive",
+          detail: null,
+          consumed: {},
+          produced: {},
+        },
+        cycle_time: 8,
       },
     ],
     jobs: [
@@ -105,7 +382,9 @@
     }
   }
 
-  let state = loadState();
+  let state = normaliseState(loadState());
+
+  logState();
 
   if (!state.season) {
     state.season = clone(defaultState.season);
@@ -199,6 +478,7 @@
   }
 
   function renderBuildings() {
+    state.buildings = state.buildings.map((building) => normaliseBuilding(building));
     Object.values(buildingContainers).forEach((container) => {
       if (container) container.innerHTML = "";
     });
@@ -222,6 +502,7 @@
               <span>Capacity <strong>${capacity}</strong></span>
             </div>
             <div class="bar" aria-hidden="true"></div>
+            ${renderIoSection(building)}
             <div class="action-row">
               <button type="button" data-action="build" data-building-id="${building.id}">Build</button>
               <button type="button" data-action="demolish" data-building-id="${building.id}">Demolish</button>
@@ -457,13 +738,70 @@
     }
   }
 
+  function updateBuildingsFromPayload(payload) {
+    if (!payload || !Array.isArray(payload.buildings)) {
+      return false;
+    }
+
+    const remoteBuildings = payload.buildings
+      .map((building) => normaliseBuilding(building))
+      .filter(Boolean);
+
+    if (!remoteBuildings.length) {
+      return false;
+    }
+
+    let updated = false;
+
+    remoteBuildings.forEach((remote) => {
+      const remoteKey = remote.type || remote.id || remote.name;
+      if (!remoteKey) {
+        return;
+      }
+      const match = state.buildings.find((local) => {
+        const localKey = local.type || local.id || local.name;
+        if (!localKey) {
+          return false;
+        }
+        return localKey === remoteKey;
+      });
+      if (!match) {
+        return;
+      }
+      Object.assign(match, {
+        inputs: remote.inputs,
+        outputs: remote.outputs,
+        can_produce: remote.can_produce,
+        reason: remote.reason,
+        effective_rate: remote.effective_rate,
+        pending_eta: remote.pending_eta,
+        last_report: remote.last_report,
+        cycle_time: remote.cycle_time,
+      });
+      updated = true;
+    });
+
+    if (updated) {
+      renderBuildings();
+      updateJobsCount();
+      updateChips();
+      saveState();
+      logState();
+    }
+
+    return updated;
+  }
+
   async function loadSeasonFromStateEndpoint() {
     const payload = await fetchJson("/api/state");
-    if (payload && payload.season) {
-      updateSeasonState(payload.season);
-      return true;
+    if (!payload) {
+      return false;
     }
-    return false;
+    if (payload.season) {
+      updateSeasonState(payload.season);
+    }
+    updateBuildingsFromPayload(payload);
+    return Boolean(payload.season);
   }
 
   async function initialiseSeasonSync() {
@@ -472,8 +810,11 @@
       return;
     }
     const initPayload = await fetchJson("/api/init", { method: "POST" });
-    if (initPayload && initPayload.season) {
-      updateSeasonState(initPayload.season);
+    if (initPayload) {
+      if (initPayload.season) {
+        updateSeasonState(initPayload.season);
+      }
+      updateBuildingsFromPayload(initPayload);
     }
     await loadSeasonFromStateEndpoint();
   }
@@ -491,8 +832,11 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dt: 1 }),
       });
-      if (payload && payload.season) {
-        updateSeasonState(payload.season);
+      if (payload) {
+        if (payload.season) {
+          updateSeasonState(payload.season);
+        }
+        updateBuildingsFromPayload(payload);
       }
       ticking = false;
     };

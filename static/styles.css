@@ -184,6 +184,71 @@ body {
   background: linear-gradient(90deg, rgba(94, 234, 212, 0.7), rgba(129, 140, 248, 0.7));
 }
 
+.io-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  color: rgb(148 163 184);
+}
+
+.io-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+
+.io-label {
+  min-width: 4.5rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgb(226 232 240 / 0.8);
+}
+
+.io-values {
+  display: flex;
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.io-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.io-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 9999px;
+  border: 1px solid rgb(71 85 105 / 0.6);
+  background: rgb(30 41 59 / 0.6);
+  padding: 0.2rem 0.45rem;
+  color: rgb(226 232 240);
+}
+
+.io-icon {
+  font-size: 0.85rem;
+}
+
+.io-amount {
+  font-variant-numeric: tabular-nums;
+}
+
+.io-empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(100 116 139);
+  font-style: italic;
+}
+
 .action-row {
   display: flex;
   flex-wrap: wrap;
