@@ -64,6 +64,7 @@ def get_state() -> Dict[str, object]:
         season=_season_snapshot(state),
         buildings=state.snapshot_buildings(),
         production_report=state.production_reports_snapshot(),
+        notifications=state.list_notifications(),
     )
 
 
