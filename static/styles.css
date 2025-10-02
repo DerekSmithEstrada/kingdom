@@ -162,10 +162,124 @@ body {
   box-shadow: 0 15px 35px -25px rgb(8 15 30 / 0.8);
 }
 
+.building-card.is-stalled {
+  border-color: rgb(248 113 113 / 0.55);
+  box-shadow: 0 20px 45px -25px rgb(248 113 113 / 0.35);
+}
+
+.building-card.is-inactive {
+  border-color: rgb(71 85 105 / 0.6);
+  background: rgb(15 23 42 / 0.45);
+}
+
 .building-meta {
   display: grid;
   gap: 0.35rem;
   font-size: 0.875rem;
+}
+
+.io-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  margin-top: 0.35rem;
+}
+
+.io-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.io-title {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgb(148 163 184 / 0.9);
+}
+
+.io-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.io-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 9999px;
+  border: 1px solid rgb(51 65 85 / 0.8);
+  background: rgb(30 41 59 / 0.65);
+  padding: 0.25rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: rgb(226 232 240);
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.io-pill--input {
+  background: rgb(30 41 59 / 0.5);
+}
+
+.io-pill--output {
+  background: rgb(17 24 39 / 0.55);
+  border-color: rgb(94 234 212 / 0.35);
+  color: rgb(165 243 252);
+}
+
+.io-pill--missing {
+  border-color: rgb(248 113 113 / 0.45);
+  background: rgb(248 113 113 / 0.12);
+  color: rgb(254 226 226);
+}
+
+.io-pill--inactive {
+  border-color: rgb(71 85 105 / 0.5);
+  background: rgb(30 41 59 / 0.35);
+  color: rgb(148 163 184);
+}
+
+.status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  color: rgb(148 163 184);
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 9999px;
+  padding: 0.25rem 0.6rem;
+  background: rgb(30 41 59 / 0.6);
+  border: 1px solid rgb(51 65 85 / 0.7);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgb(226 232 240 / 0.85);
+}
+
+.status-chip--stalled {
+  background: rgb(248 113 113 / 0.18);
+  border-color: rgb(248 113 113 / 0.45);
+  color: rgb(254 226 226);
+}
+
+.status-chip--inactive {
+  background: rgb(71 85 105 / 0.2);
+  border-color: rgb(71 85 105 / 0.45);
+  color: rgb(203 213 225);
+}
+
+.status-detail {
+  color: rgb(148 163 184 / 0.85);
 }
 
 .stat-row {
