@@ -22,6 +22,20 @@
     minimumFractionDigits: 0,
   });
 
+  function normaliseKey(value) {
+    if (typeof value !== "string") {
+      return null;
+    }
+    return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  }
+
+  function normaliseResourceKey(resource) {
+    if (typeof resource !== "string") {
+      return null;
+    }
+    return resource.trim().toLowerCase();
+  }
+
   function normaliseResourceMap(value) {
     if (!value || typeof value !== "object") {
       return {};
@@ -252,6 +266,7 @@
       {
         id: "woodcutter-camp",
         type: "woodcutter_camp",
+        job: "forester",
         name: "Woodcutter Camp",
         category: "wood",
         built: 1,
@@ -276,6 +291,7 @@
       {
         id: "lumber-hut",
         type: "lumber_hut",
+        job: "artisan",
         name: "Lumber Hut",
         category: "wood",
         built: 2,
@@ -300,6 +316,7 @@
       {
         id: "stone-quarry",
         type: "miner",
+        job: "miner",
         name: "Stone Quarry",
         category: "stone",
         built: 1,
@@ -324,6 +341,7 @@
       {
         id: "wheat-farm",
         type: "farmer",
+        job: "farmer",
         name: "Wheat Farm",
         category: "crops",
         built: 0,
@@ -429,6 +447,76 @@
   const seasonLabel = document.getElementById("season-label");
   const seasonFill = document.getElementById("season-fill");
 
+  const jobsPanel = document.getElementById("jobs");
+  let resourceFilterChip = null;
+  let resourceFilterLabel = null;
+  const jobPillData = new WeakMap();
+  let activeResourceFilter = null;
+  let jobResourceTooltip = null;
+  let jobResourceTooltipTitle = null;
+  let jobResourceTooltipList = null;
+  let jobResourceTooltipHeading = null;
+  let tooltipTarget = null;
+  let tooltipHideTimer = null;
+
+  if (jobsPanel && jobsList) {
+    const panelHeader = jobsPanel.querySelector(".panel-header");
+    const chip = document.createElement("div");
+    chip.id = "resource-filter-chip";
+    chip.className = "resource-filter-chip";
+    chip.hidden = true;
+    chip.innerHTML = `
+      <span class="resource-filter-chip__label"></span>
+      <button type="button" class="resource-filter-chip__clear" data-action="clear-resource-filter">Quitar filtro</button>
+    `;
+    if (panelHeader && panelHeader.parentNode) {
+      panelHeader.after(chip);
+    } else {
+      jobsPanel.insertBefore(chip, jobsList);
+    }
+    resourceFilterChip = chip;
+    resourceFilterLabel = chip.querySelector(".resource-filter-chip__label");
+    const clearButton = chip.querySelector(".resource-filter-chip__clear");
+    if (clearButton) {
+      clearButton.addEventListener("click", () => {
+        clearResourceFilter();
+      });
+    }
+  }
+
+  if (typeof document !== "undefined") {
+    jobResourceTooltip = document.createElement("div");
+    jobResourceTooltip.className = "job-resource-tooltip";
+    jobResourceTooltip.setAttribute("role", "tooltip");
+    jobResourceTooltip.dataset.visible = "false";
+    jobResourceTooltip.hidden = true;
+
+    jobResourceTooltipTitle = document.createElement("p");
+    jobResourceTooltipTitle.className = "job-resource-tooltip__title";
+
+    jobResourceTooltipHeading = document.createElement("p");
+    jobResourceTooltipHeading.className = "job-resource-tooltip__heading";
+    jobResourceTooltipHeading.textContent = "Edificios involucrados";
+
+    jobResourceTooltipList = document.createElement("ul");
+    jobResourceTooltipList.className = "job-resource-tooltip__list";
+
+    jobResourceTooltip.append(jobResourceTooltipTitle, jobResourceTooltipHeading, jobResourceTooltipList);
+    if (document.body) {
+      document.body.appendChild(jobResourceTooltip);
+    } else {
+      document.addEventListener(
+        "DOMContentLoaded",
+        () => {
+          if (document.body) {
+            document.body.appendChild(jobResourceTooltip);
+          }
+        },
+        { once: true }
+      );
+    }
+  }
+
   function getCapacity(building) {
     return building.built * building.capacityPerBuilding;
   }
@@ -494,6 +582,272 @@
     state.season = snapshot;
     renderSeason(snapshot);
     saveState();
+  }
+
+  function createJobLookups() {
+    const idSet = new Set();
+    const aliasMap = new Map();
+    const jobKeyMap = new Map();
+
+    state.jobs.forEach((job) => {
+      const idKey = normaliseKey(job.id);
+      if (!idKey) {
+        return;
+      }
+      idSet.add(idKey);
+      aliasMap.set(idKey, idKey);
+      jobKeyMap.set(idKey, idKey);
+      if (typeof job.name === "string") {
+        const nameKey = normaliseKey(job.name);
+        if (nameKey) {
+          aliasMap.set(nameKey, idKey);
+          jobKeyMap.set(nameKey, idKey);
+        }
+      }
+    });
+
+    function registerAlias(alias, jobKey) {
+      const aliasKey = normaliseKey(alias);
+      const lookupKey = normaliseKey(jobKey);
+      if (!aliasKey || !lookupKey) {
+        return;
+      }
+      const resolved = jobKeyMap.get(lookupKey);
+      if (!resolved) {
+        return;
+      }
+      aliasMap.set(aliasKey, resolved);
+    }
+
+    registerAlias("woodcutter_camp", "forester");
+    registerAlias("woodcuttercamp", "forester");
+    registerAlias("woodcutter", "forester");
+    registerAlias("wood", "forester");
+    registerAlias("lumber_hut", "artisan");
+    registerAlias("lumberhut", "artisan");
+    registerAlias("lumber", "artisan");
+    registerAlias("artisan_workshop", "artisan");
+    registerAlias("stone_quarry", "miner");
+    registerAlias("quarry", "miner");
+    registerAlias("stone", "miner");
+    registerAlias("wheat_farm", "farmer");
+    registerAlias("grain_farm", "farmer");
+    registerAlias("farm", "farmer");
+    registerAlias("crops", "farmer");
+
+    return { idSet, aliasMap };
+  }
+
+  function getBuildingJobKey(building, lookups) {
+    if (!building || !lookups) {
+      return null;
+    }
+    const { idSet, aliasMap } = lookups;
+    const candidates = [];
+    const jobFields = [
+      "job",
+      "job_type",
+      "jobType",
+      "job_id",
+      "jobId",
+      "profession",
+      "profession_type",
+      "worker_type",
+      "workerType",
+      "role",
+    ];
+
+    jobFields.forEach((field) => {
+      const value = building[field];
+      if (typeof value === "string") {
+        candidates.push(value);
+      }
+    });
+
+    if (typeof building.type === "string") {
+      candidates.push(building.type);
+    }
+    if (typeof building.id === "string") {
+      candidates.push(building.id);
+    }
+    if (typeof building.category === "string") {
+      candidates.push(building.category);
+    }
+    if (typeof building.name === "string") {
+      candidates.push(building.name);
+    }
+
+    for (const candidate of candidates) {
+      const key = normaliseKey(candidate);
+      if (!key) continue;
+      if (idSet.has(key)) {
+        return key;
+      }
+      if (aliasMap.has(key)) {
+        return aliasMap.get(key);
+      }
+    }
+
+    for (const candidate of candidates) {
+      const key = normaliseKey(candidate);
+      if (!key) continue;
+      for (const jobId of idSet) {
+        if (key.includes(jobId)) {
+          return jobId;
+        }
+      }
+      for (const [aliasKey, jobId] of aliasMap.entries()) {
+        if (key.includes(aliasKey)) {
+          return jobId;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function getBuildingCyclesPerMinute(building) {
+    if (!building) return 0;
+    const effectiveRate = Number(building.effective_rate);
+    const cycleTime = Number(building.cycle_time);
+    if (!Number.isFinite(effectiveRate) || !Number.isFinite(cycleTime) || cycleTime <= 0) {
+      return 0;
+    }
+    return Math.max(0, effectiveRate) * (60 / cycleTime);
+  }
+
+  function aggregateResourceTotals(map, building, resources, cyclesPerMinute, direction) {
+    if (!resources || typeof resources !== "object") {
+      return;
+    }
+    Object.entries(resources).forEach(([resource, amount]) => {
+      const key = normaliseResourceKey(resource);
+      const perCycle = Number(amount);
+      if (!key || !Number.isFinite(perCycle) || perCycle === 0) {
+        return;
+      }
+      const perMinute = perCycle * cyclesPerMinute * direction;
+      if (!Number.isFinite(perMinute) || Math.abs(perMinute) <= 1e-9) {
+        return;
+      }
+      let entry = map.get(key);
+      if (!entry) {
+        entry = { total: 0, buildings: new Map() };
+        map.set(key, entry);
+      }
+      entry.total += perMinute;
+      const existing = entry.buildings.get(building.id);
+      const nextAmount = (existing ? existing.amount : 0) + perMinute;
+      entry.buildings.set(building.id, {
+        id: building.id,
+        name: building.name || formatResourceKey(building.id),
+        amount: nextAmount,
+      });
+    });
+  }
+
+  function calculateJobResourceBreakdown(jobId, lookups) {
+    const normalizedJobId = normaliseKey(jobId);
+    if (!normalizedJobId) {
+      return new Map();
+    }
+    const jobLookups = lookups || createJobLookups();
+    if (!jobLookups.idSet.has(normalizedJobId)) {
+      return new Map();
+    }
+    const totals = new Map();
+    state.buildings.forEach((building) => {
+      const buildingJob = getBuildingJobKey(building, jobLookups);
+      if (buildingJob !== normalizedJobId) {
+        return;
+      }
+      const cyclesPerMinute = getBuildingCyclesPerMinute(building);
+      if (cyclesPerMinute <= 0) {
+        return;
+      }
+      aggregateResourceTotals(totals, building, building.outputs, cyclesPerMinute, 1);
+      aggregateResourceTotals(totals, building, building.inputs, cyclesPerMinute, -1);
+    });
+    return totals;
+  }
+
+  function formatPerMinuteRate(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return "≈0/min";
+    }
+    const magnitude = Math.abs(numeric);
+    if (magnitude < 0.01) {
+      return "≈0/min";
+    }
+    const sign = numeric >= 0 ? "+" : "−";
+    return `${sign}${formatAmount(magnitude)}/min`;
+  }
+
+  const JOB_RESOURCE_EPSILON = 1e-6;
+
+  function createJobResourceEntries(job, lookups) {
+    const breakdown = calculateJobResourceBreakdown(job.id, lookups);
+    const entries = Array.from(breakdown.entries()).map(([resource, data]) => ({
+      resource,
+      total: data.total,
+      buildings: data.buildings,
+    }));
+    return entries
+      .filter((entry) => Math.abs(entry.total) > JOB_RESOURCE_EPSILON)
+      .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+  }
+
+  function updateJobResourceStrip(container, job, lookups) {
+    if (!container) {
+      return;
+    }
+    container.innerHTML = "";
+    const entries = createJobResourceEntries(job, lookups);
+    if (!entries.length) {
+      container.hidden = true;
+      return;
+    }
+
+    container.hidden = false;
+    entries.forEach((entry) => {
+      const pill = document.createElement("button");
+      pill.type = "button";
+      pill.className = "job-resource-pill";
+      pill.dataset.jobResourcePill = job.id;
+      pill.dataset.resource = entry.resource;
+      pill.dataset.action = "job-resource-filter";
+      pill.dataset.jobId = job.id;
+
+      if (entry.total >= 0) {
+        pill.classList.add("job-resource-pill--positive");
+      } else {
+        pill.classList.add("job-resource-pill--negative");
+      }
+
+      const icon = document.createElement("span");
+      icon.className = "job-resource-pill__icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = resourceIconMap[entry.resource] || "📦";
+
+      const amount = document.createElement("span");
+      amount.className = "job-resource-pill__amount";
+      amount.textContent = formatPerMinuteRate(entry.total);
+
+      pill.append(icon, amount);
+      pill.setAttribute(
+        "aria-label",
+        `${job.name}: ${formatResourceKey(entry.resource)} ${formatPerMinuteRate(entry.total)}`
+      );
+
+      container.appendChild(pill);
+      jobPillData.set(pill, {
+        jobId: job.id,
+        resource: entry.resource,
+        total: entry.total,
+        buildings: entry.buildings,
+      });
+    });
   }
 
   function createStat(labelText) {
@@ -908,6 +1262,8 @@
         buildingElementMap.delete(buildingId);
       }
     });
+
+    applyActiveResourceFilter();
   }
 
   function triggerImportAction(resourceKey) {
@@ -967,25 +1323,64 @@
   }
 
   function renderJobs() {
+    hideJobResourceTooltip(true);
     jobsList.innerHTML = "";
+    const jobLookups = createJobLookups();
     state.jobs.forEach((job) => {
       const card = document.createElement("div");
       card.className = "job-card";
       card.dataset.jobId = job.id;
-      card.innerHTML = `
-        <header>
-          <div class="flex items-center gap-2 text-slate-100">
-            <span class="icon-badge icon-badge--sm" role="img" aria-label="${job.name} icon">${job.icon}</span>
-            <span>${job.name}</span>
-          </div>
-          <span class="text-xs uppercase tracking-[0.2em] text-slate-400">${job.assigned}/${job.max}</span>
-        </header>
-        <div class="controls">
-          <button type="button" data-action="job-decrement" data-job-id="${job.id}">-</button>
-          <input type="number" min="0" max="${job.max}" value="${job.assigned}" data-job-input="${job.id}" />
-          <button type="button" data-action="job-increment" data-job-id="${job.id}">+</button>
-        </div>
-      `;
+
+      const header = document.createElement("header");
+      const titleGroup = document.createElement("div");
+      titleGroup.className = "flex items-center gap-2 text-slate-100";
+
+      const icon = document.createElement("span");
+      icon.className = "icon-badge icon-badge--sm";
+      icon.setAttribute("role", "img");
+      icon.setAttribute("aria-label", `${job.name} icon`);
+      icon.textContent = job.icon;
+
+      const name = document.createElement("span");
+      name.textContent = job.name;
+      titleGroup.append(icon, name);
+
+      const counter = document.createElement("span");
+      counter.className = "text-xs uppercase tracking-[0.2em] text-slate-400";
+      counter.textContent = `${job.assigned}/${job.max}`;
+
+      header.append(titleGroup, counter);
+
+      const resourceStrip = document.createElement("div");
+      resourceStrip.className = "job-resource-strip";
+      resourceStrip.dataset.jobResourceStrip = job.id;
+      updateJobResourceStrip(resourceStrip, job, jobLookups);
+
+      const controls = document.createElement("div");
+      controls.className = "controls";
+
+      const decrement = document.createElement("button");
+      decrement.type = "button";
+      decrement.dataset.action = "job-decrement";
+      decrement.dataset.jobId = job.id;
+      decrement.textContent = "-";
+
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "0";
+      input.max = String(job.max);
+      input.value = String(job.assigned);
+      input.dataset.jobInput = job.id;
+
+      const increment = document.createElement("button");
+      increment.type = "button";
+      increment.dataset.action = "job-increment";
+      increment.dataset.jobId = job.id;
+      increment.textContent = "+";
+
+      controls.append(decrement, input, increment);
+
+      card.append(header, resourceStrip, controls);
       jobsList.appendChild(card);
     });
   }
@@ -1024,6 +1419,282 @@
       `;
       tradeList.appendChild(row);
     });
+  }
+
+  function updateResourceFilterChip(resourceKey, count) {
+    if (!resourceFilterChip || !resourceFilterLabel) {
+      return;
+    }
+    if (!resourceKey) {
+      resourceFilterChip.hidden = true;
+      resourceFilterChip.removeAttribute("data-resource");
+      resourceFilterLabel.textContent = "";
+      return;
+    }
+    resourceFilterChip.hidden = false;
+    resourceFilterChip.dataset.resource = resourceKey;
+    const label = formatResourceKey(resourceKey);
+    const suffix = count === 1 ? "edificio" : "edificios";
+    resourceFilterLabel.textContent = `Filtro: ${label} (${count} ${suffix})`;
+  }
+
+  function applyActiveResourceFilter(options = {}) {
+    const { scrollToFirst = false } = options;
+    if (!activeResourceFilter) {
+      buildingElementMap.forEach((entry) => {
+        entry.article.classList.remove("building-card--highlighted", "building-card--dimmed");
+      });
+      updateResourceFilterChip(null, 0);
+      return;
+    }
+
+    const normalized = normaliseResourceKey(activeResourceFilter);
+    if (!normalized) {
+      activeResourceFilter = null;
+      applyActiveResourceFilter();
+      return;
+    }
+
+    const matchingIds = new Set();
+    state.buildings.forEach((building) => {
+      const inputs = building && typeof building.inputs === "object" ? building.inputs : {};
+      for (const [resource, amount] of Object.entries(inputs)) {
+        if (normaliseResourceKey(resource) === normalized && Number(amount) > 0) {
+          matchingIds.add(building.id);
+          break;
+        }
+      }
+    });
+
+    buildingElementMap.forEach((entry, buildingId) => {
+      const isMatch = matchingIds.has(buildingId);
+      const shouldDim = matchingIds.size > 0 && !isMatch;
+      entry.article.classList.toggle("building-card--highlighted", isMatch);
+      entry.article.classList.toggle("building-card--dimmed", shouldDim);
+    });
+
+    if (matchingIds.size === 0) {
+      buildingElementMap.forEach((entry) => {
+        entry.article.classList.remove("building-card--dimmed");
+      });
+    }
+
+    updateResourceFilterChip(normalized, matchingIds.size);
+
+    if (scrollToFirst && matchingIds.size > 0) {
+      const firstId = matchingIds.values().next().value;
+      const target = buildingElementMap.get(firstId);
+      if (target && target.article && typeof target.article.scrollIntoView === "function") {
+        target.article.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
+  }
+
+  function activateResourceFilter(resourceKey) {
+    const normalized = normaliseResourceKey(resourceKey);
+    if (!normalized) {
+      return;
+    }
+    if (activeResourceFilter === normalized) {
+      clearResourceFilter();
+      return;
+    }
+    activeResourceFilter = normalized;
+    applyActiveResourceFilter({ scrollToFirst: true });
+  }
+
+  function clearResourceFilter() {
+    if (!activeResourceFilter) {
+      updateResourceFilterChip(null, 0);
+      buildingElementMap.forEach((entry) => {
+        entry.article.classList.remove("building-card--highlighted", "building-card--dimmed");
+      });
+      hideJobResourceTooltip(true);
+      return;
+    }
+    activeResourceFilter = null;
+    applyActiveResourceFilter();
+    hideJobResourceTooltip(true);
+  }
+
+  function positionJobResourceTooltip(target) {
+    if (!jobResourceTooltip || !target) {
+      return;
+    }
+    const rect = target.getBoundingClientRect();
+    const scrollX = typeof window !== "undefined" ? window.scrollX || window.pageXOffset || 0 : 0;
+    const scrollY = typeof window !== "undefined" ? window.scrollY || window.pageYOffset || 0 : 0;
+    const viewportWidth =
+      typeof document !== "undefined" && document.documentElement
+        ? document.documentElement.clientWidth
+        : typeof window !== "undefined"
+        ? window.innerWidth
+        : 0;
+
+    const schedule = (() => {
+      if (typeof window !== "undefined") {
+        if (typeof window.requestAnimationFrame === "function") {
+          return window.requestAnimationFrame.bind(window);
+        }
+        if (typeof window.setTimeout === "function") {
+          return (callback) => window.setTimeout(callback, 0);
+        }
+      }
+      return (callback) => setTimeout(callback, 0);
+    })();
+
+    schedule(() => {
+      if (!jobResourceTooltip) {
+        return;
+      }
+      const tooltipRect = jobResourceTooltip.getBoundingClientRect();
+      const top = scrollY + rect.bottom + 10;
+      const minLeft = scrollX + 8;
+      const maxLeft = scrollX + viewportWidth - tooltipRect.width - 8;
+      let left = scrollX + rect.left + rect.width / 2 - tooltipRect.width / 2;
+      if (Number.isFinite(minLeft) && Number.isFinite(maxLeft)) {
+        left = Math.max(minLeft, Math.min(left, maxLeft));
+      }
+      jobResourceTooltip.style.top = `${top}px`;
+      jobResourceTooltip.style.left = `${left}px`;
+      jobResourceTooltip.dataset.visible = "true";
+    });
+  }
+
+  function showJobResourceTooltip(target) {
+    if (!jobResourceTooltip || !jobResourceTooltipList || !jobResourceTooltipTitle) {
+      return;
+    }
+    const data = jobPillData.get(target);
+    if (!data) {
+      return;
+    }
+
+    if (tooltipHideTimer && typeof window !== "undefined") {
+      window.clearTimeout(tooltipHideTimer);
+      tooltipHideTimer = null;
+    }
+
+    tooltipTarget = target;
+    jobResourceTooltipTitle.textContent = formatResourceKey(data.resource);
+    jobResourceTooltipList.innerHTML = "";
+
+    const items = Array.from(data.buildings.values()).filter((item) =>
+      Math.abs(item.amount) > JOB_RESOURCE_EPSILON
+    );
+    items.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+
+    if (!items.length) {
+      const empty = document.createElement("li");
+      empty.className = "job-resource-tooltip__empty";
+      empty.textContent = "Sin edificios activos";
+      jobResourceTooltipList.appendChild(empty);
+    } else {
+      items.forEach((item) => {
+        const listItem = document.createElement("li");
+        listItem.className = "job-resource-tooltip__item";
+        listItem.classList.add(
+          item.amount >= 0
+            ? "job-resource-tooltip__item--positive"
+            : "job-resource-tooltip__item--negative"
+        );
+
+        const name = document.createElement("span");
+        name.className = "job-resource-tooltip__name";
+        name.textContent = item.name;
+
+        const value = document.createElement("span");
+        value.className = "job-resource-tooltip__value";
+        value.textContent = formatPerMinuteRate(item.amount);
+
+        listItem.append(name, value);
+        jobResourceTooltipList.appendChild(listItem);
+      });
+    }
+
+    jobResourceTooltip.hidden = false;
+    jobResourceTooltip.dataset.visible = "false";
+    positionJobResourceTooltip(target);
+  }
+
+  function hideJobResourceTooltip(immediate = false) {
+    if (!jobResourceTooltip) {
+      return;
+    }
+    if (tooltipHideTimer && typeof window !== "undefined") {
+      window.clearTimeout(tooltipHideTimer);
+      tooltipHideTimer = null;
+    }
+    if (jobResourceTooltip.hidden) {
+      tooltipTarget = null;
+      return;
+    }
+    jobResourceTooltip.dataset.visible = "false";
+    const finalize = () => {
+      if (jobResourceTooltip) {
+        jobResourceTooltip.hidden = true;
+      }
+      tooltipTarget = null;
+      tooltipHideTimer = null;
+    };
+    if (immediate || typeof window === "undefined") {
+      finalize();
+      return;
+    }
+    tooltipHideTimer = window.setTimeout(finalize, 120);
+  }
+
+  function handleJobResourceHover(event) {
+    const pill = event.target.closest("[data-job-resource-pill]");
+    if (!pill || !jobsList.contains(pill)) {
+      return;
+    }
+    showJobResourceTooltip(pill);
+  }
+
+  function handleJobResourceLeave(event) {
+    const pill = event.target.closest("[data-job-resource-pill]");
+    if (!pill) {
+      return;
+    }
+    const related = event.relatedTarget;
+    if (related && pill.contains(related)) {
+      return;
+    }
+    if (tooltipTarget === pill) {
+      hideJobResourceTooltip();
+    }
+  }
+
+  function handleJobResourceFocus(event) {
+    const pill = event.target.closest("[data-job-resource-pill]");
+    if (!pill || !jobsList.contains(pill)) {
+      return;
+    }
+    showJobResourceTooltip(pill);
+  }
+
+  function handleJobResourceBlur(event) {
+    const pill = event.target.closest("[data-job-resource-pill]");
+    if (!pill) {
+      return;
+    }
+    const related = event.relatedTarget &&
+      typeof event.relatedTarget.closest === "function"
+      ? event.relatedTarget.closest("[data-job-resource-pill]")
+      : null;
+    if (related) {
+      return;
+    }
+    if (tooltipTarget === pill) {
+      hideJobResourceTooltip();
+    }
+  }
+
+  function handleGlobalScroll() {
+    if (tooltipTarget) {
+      hideJobResourceTooltip(true);
+    }
   }
 
   function updateJobsCount() {
@@ -1139,7 +1810,16 @@
   function handleJobActions(event) {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
-    const { action, jobId } = button.dataset;
+    const { action } = button.dataset;
+    if (action === "job-resource-filter") {
+      const { resource } = button.dataset;
+      if (resource) {
+        activateResourceFilter(resource);
+        hideJobResourceTooltip(true);
+      }
+      return;
+    }
+    const { jobId } = button.dataset;
     if (!jobId) return;
     if (action === "job-increment") {
       adjustJob(jobId, 1);
@@ -1353,6 +2033,15 @@
   document.getElementById("building-accordion").addEventListener("change", handleBuildingInput);
   jobsList.addEventListener("click", handleJobActions);
   jobsList.addEventListener("change", handleJobInput);
+  jobsList.addEventListener("mouseover", handleJobResourceHover);
+  jobsList.addEventListener("mouseout", handleJobResourceLeave);
+  jobsList.addEventListener("focusin", handleJobResourceFocus);
+  jobsList.addEventListener("focusout", handleJobResourceBlur);
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("scroll", handleGlobalScroll, { passive: true });
+    window.addEventListener("resize", handleGlobalScroll);
+  }
   tradeList.addEventListener("click", handleTradeActions);
   tradeList.addEventListener("input", handleTradeInputs);
 

@@ -167,6 +167,17 @@ body {
   box-shadow: 0 15px 35px -25px rgb(8 15 30 / 0.8);
 }
 
+.building-card--highlighted {
+  border-color: rgb(251 191 36 / 0.65);
+  box-shadow: 0 0 0 1px rgb(251 191 36 / 0.45),
+    0 22px 48px -28px rgb(251 191 36 / 0.5);
+}
+
+.building-card--dimmed {
+  opacity: 0.45;
+  filter: saturate(0.6);
+}
+
 .building-meta {
   display: grid;
   gap: 0.35rem;
@@ -442,6 +453,60 @@ body {
   box-shadow: 0 15px 35px -25px rgb(8 15 30 / 0.8);
 }
 
+.job-resource-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.job-resource-strip[hidden] {
+  display: none;
+}
+
+.job-resource-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 9999px;
+  border: 1px solid rgb(71 85 105 / 0.7);
+  background: rgb(15 23 42 / 0.7);
+  padding: 0.2rem 0.6rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgb(226 232 240);
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.2s ease, border-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.job-resource-pill:focus-visible,
+.job-resource-pill:hover {
+  transform: translateY(-1px);
+  background: rgb(30 41 59 / 0.7);
+}
+
+.job-resource-pill--positive {
+  border-color: rgb(52 211 153 / 0.4);
+  background: rgb(16 185 129 / 0.12);
+  color: rgb(134 239 172);
+}
+
+.job-resource-pill--negative {
+  border-color: rgb(251 191 36 / 0.6);
+  background: rgb(251 191 36 / 0.12);
+  color: rgb(251 191 36);
+}
+
+.job-resource-pill__icon {
+  font-size: 0.85rem;
+}
+
+.job-resource-pill__amount {
+  font-variant-numeric: tabular-nums;
+}
+
 .job-card header {
   display: flex;
   justify-content: space-between;
@@ -455,6 +520,121 @@ body {
   align-items: center;
   gap: 0.5rem;
   font-size: 0.75rem;
+}
+
+.job-resource-tooltip {
+  position: absolute;
+  z-index: 40;
+  min-width: 14rem;
+  max-width: 18rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgb(51 65 85 / 0.8);
+  background: rgb(15 23 42 / 0.92);
+  padding: 0.75rem;
+  box-shadow: 0 25px 60px -32px rgb(8 15 30 / 0.95);
+  color: rgb(226 232 240);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.job-resource-tooltip[data-visible="true"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.job-resource-tooltip__title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgb(148 163 184);
+}
+
+.job-resource-tooltip__heading {
+  margin-top: 0.35rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgb(148 163 184 / 0.85);
+}
+
+.job-resource-tooltip__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+}
+
+.job-resource-tooltip__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.75rem;
+  color: rgb(226 232 240);
+}
+
+.job-resource-tooltip__item--positive {
+  color: rgb(134 239 172);
+}
+
+.job-resource-tooltip__item--negative {
+  color: rgb(251 191 36);
+}
+
+.job-resource-tooltip__name {
+  flex: 1;
+}
+
+.job-resource-tooltip__value {
+  font-variant-numeric: tabular-nums;
+}
+
+.job-resource-tooltip__empty {
+  font-size: 0.7rem;
+  color: rgb(148 163 184);
+}
+
+.resource-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  border-radius: 9999px;
+  border: 1px solid rgb(129 140 248 / 0.4);
+  background: rgb(129 140 248 / 0.12);
+  color: rgb(165 180 252);
+  padding: 0.35rem 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 0.75rem;
+}
+
+.resource-filter-chip[hidden] {
+  display: none !important;
+}
+
+.resource-filter-chip__clear {
+  border-radius: 9999px;
+  border: 1px solid rgb(129 140 248 / 0.35);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  padding: 0.2rem 0.55rem;
+  text-transform: uppercase;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.resource-filter-chip__clear:hover,
+.resource-filter-chip__clear:focus-visible {
+  background: rgb(129 140 248 / 0.2);
+  border-color: rgb(129 140 248 / 0.5);
 }
 
 .tooltip-trigger {
