@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+import threading
 from typing import Deque, Dict, List, Mapping, Optional, Set, Tuple
 
 from . import config
@@ -20,6 +21,9 @@ class GameState:
     _instance: Optional["GameState"] = None
 
     def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._wood_tick_residual = 0.0
+        self._wood_tick_anchor: Optional[float] = None
         self.notifications: Deque[str] = deque(maxlen=config.NOTIFICATION_QUEUE_LIMIT)
         self.last_production_reports: Dict[int, Dict[str, object]] = {}
         self._active_missing_notifications: Dict[Tuple[str, Resource], str] = {}
@@ -36,6 +40,8 @@ class GameState:
         self._initialise_state()
 
     def _initialise_state(self) -> None:
+        self._wood_tick_residual = 0.0
+        self._wood_tick_anchor = None
         self.notifications.clear()
         self.season_clock = SeasonClock(season_modifiers=config.SEASON_MODIFIERS)
         self._sync_season_state()
@@ -114,6 +120,7 @@ class GameState:
 
     # ------------------------------------------------------------------
     def tick(self, dt: float) -> None:
+        wood_baseline = self.inventory.get_amount(Resource.WOOD)
         self.season_clock.update(dt)
         self._sync_season_state()
 
@@ -127,6 +134,7 @@ class GameState:
             self.last_production_reports[building.id] = report
             self._update_missing_input_notifications(building, report, active_missing)
         self._cleanup_missing_notifications(active_missing)
+        self._apply_simple_resource_tick(dt, wood_baseline)
 
     def get_production_modifiers(self, building: Building) -> Dict[str, float]:
         return self.season_clock.get_modifiers(building.type_key)
@@ -198,6 +206,56 @@ class GameState:
 
     def get_building(self, building_id: int) -> Optional[Building]:
         return self.buildings.get(building_id)
+
+    def get_building_by_type(self, type_key: str) -> Optional[Building]:
+        for building in self.buildings.values():
+            if building.type_key == type_key:
+                return building
+        return None
+
+    def basic_state_snapshot(self) -> Dict[str, object]:
+        with self._lock:
+            wood_amount = round(self.inventory.get_amount(Resource.WOOD), 1)
+            woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
+            workers = woodcutter.assigned_workers if woodcutter else 0
+        return {
+            "items": {"wood": wood_amount},
+            "buildings": {
+                config.WOODCUTTER_CAMP: {
+                    "workers": int(workers),
+                }
+            },
+        }
+
+    def _apply_simple_resource_tick(self, dt: float, baseline: float) -> None:
+        if dt is None:
+            return
+        seconds = float(dt)
+        if seconds <= 0:
+            return
+        with self._lock:
+            if self._wood_tick_anchor is None:
+                self._wood_tick_anchor = round(float(baseline), 1)
+                self.inventory.set_amount(Resource.WOOD, self._wood_tick_anchor)
+            self._wood_tick_residual += seconds
+            whole_seconds = int(self._wood_tick_residual)
+            if whole_seconds <= 0:
+                return
+            self._wood_tick_residual -= whole_seconds
+            current = self._wood_tick_anchor
+            for _ in range(whole_seconds):
+                current = self._increment_wood_locked(current)
+            self._wood_tick_anchor = current
+            self.inventory.set_amount(Resource.WOOD, current)
+            if self._wood_tick_residual <= 1e-9:
+                self._wood_tick_residual = 0.0
+                self._wood_tick_anchor = None
+
+    def _increment_wood_locked(self, current: float) -> float:
+        woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
+        if woodcutter and woodcutter.assigned_workers >= 1:
+            current += 0.1
+        return round(current, 1)
 
     # ------------------------------------------------------------------
     def snapshot_hud(self) -> Dict[str, object]:

@@ -2596,6 +2596,28 @@
     setInterval(performTick, 5000);
   }
 
+  function startWoodPolling() {
+    if (typeof fetch !== "function") return;
+    const woodValueElement = document.querySelector(
+      '.chip[data-resource="wood"] .value'
+    );
+    if (!woodValueElement) return;
+
+    const updateWood = async () => {
+      const payload = await fetchJson("/state");
+      if (!payload || !payload.items) return;
+      const amount = Number(payload.items.wood);
+      const formatted = Number.isFinite(amount) ? amount.toFixed(1) : "0.0";
+      woodValueElement.textContent = formatted;
+      if (state.resources) {
+        state.resources.wood = Number.isFinite(amount) ? amount : 0;
+      }
+    };
+
+    updateWood();
+    setInterval(updateWood, 1000);
+  }
+
   function attachAccordion() {
     const triggers = document.querySelectorAll(".accordion-trigger");
     triggers.forEach((trigger, index) => {
@@ -2636,6 +2658,8 @@
   updateJobsCount();
   updateChips();
   renderSeason(state.season);
+
+  startWoodPolling();
 
   const initialisationPromise = initialiseSeasonSync();
   if (verifyState.enabled) {
