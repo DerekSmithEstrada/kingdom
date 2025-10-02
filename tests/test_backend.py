@@ -5,6 +5,7 @@ import math
 import os
 import sys
 from pathlib import Path
+from typing import Tuple
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -330,6 +331,168 @@ def test_atomic_cycle_reports_consumption() -> None:
     assert math.isclose(final_wood, expected_wood, rel_tol=1e-6)
     assert math.isclose(final_gold, expected_gold, rel_tol=1e-6)
     assert math.isclose(state.inventory.get_amount(Resource.PLANK), expected_planks, rel_tol=1e-6)
+
+
+def test_insufficient_stock_blocks_output() -> None:
+    ui_bridge.init_game()
+    build_result = ui_bridge.build_building(config.LUMBER_HUT)
+    building_id = build_result["building"]["id"]
+    state = get_game_state()
+
+    ui_bridge.assign_workers(building_id, 2)
+    state.inventory.set_amount(Resource.WOOD, 1.0)
+    state.inventory.set_amount(Resource.GOLD, 50.0)
+    state.inventory.set_amount(Resource.PLANK, 0.0)
+
+    ui_bridge.tick(4.0)
+
+    report = state.last_production_reports.get(building_id)
+    assert report is not None
+    assert report["status"] == "stalled"
+    assert report["reason"] == "missing_input"
+    assert not report["consumed"]
+    assert not report["produced"]
+    assert math.isclose(state.inventory.get_amount(Resource.WOOD), 1.0, rel_tol=1e-6)
+    assert math.isclose(state.inventory.get_amount(Resource.PLANK), 0.0, rel_tol=1e-6)
+
+
+def test_exact_stock_produces_without_negatives() -> None:
+    ui_bridge.init_game()
+    build_result = ui_bridge.build_building(config.LUMBER_HUT)
+    building_id = build_result["building"]["id"]
+    state = get_game_state()
+
+    ui_bridge.assign_workers(building_id, 2)
+    state.inventory.set_amount(Resource.WOOD, 2.0)
+    state.inventory.set_amount(Resource.GOLD, 50.0)
+    state.inventory.set_amount(Resource.PLANK, 0.0)
+
+    ui_bridge.tick(4.0)
+
+    report = state.last_production_reports.get(building_id)
+    assert report is not None
+    assert report["status"] == "produced"
+    produced = report["produced"].get(Resource.PLANK.value, 0.0)
+    assert math.isclose(produced, 1.0, rel_tol=1e-6)
+    assert state.inventory.get_amount(Resource.WOOD) >= -1e-9
+    assert math.isclose(state.inventory.get_amount(Resource.WOOD), 0.0, abs_tol=1e-6)
+    assert math.isclose(state.inventory.get_amount(Resource.PLANK), produced, rel_tol=1e-6)
+
+
+def test_competing_buildings_consume_available_input_once() -> None:
+    ui_bridge.init_game()
+    first = ui_bridge.build_building(config.LUMBER_HUT)
+    second = ui_bridge.build_building(config.LUMBER_HUT)
+    first_id = first["building"]["id"]
+    second_id = second["building"]["id"]
+    state = get_game_state()
+
+    ui_bridge.assign_workers(first_id, 2)
+    ui_bridge.assign_workers(second_id, 2)
+    state.inventory.set_amount(Resource.WOOD, 2.0)
+    state.inventory.set_amount(Resource.GOLD, 100.0)
+    state.inventory.set_amount(Resource.PLANK, 0.0)
+
+    ui_bridge.tick(4.0)
+
+    first_report = state.last_production_reports.get(first_id)
+    second_report = state.last_production_reports.get(second_id)
+    assert first_report is not None and second_report is not None
+    produced_total = first_report["produced"].get(Resource.PLANK.value, 0.0) + second_report[
+        "produced"
+    ].get(Resource.PLANK.value, 0.0)
+    assert math.isclose(produced_total, 1.0, rel_tol=1e-6)
+    statuses = {first_report["status"], second_report["status"]}
+    assert statuses == {"produced", "stalled"}
+    assert math.isclose(state.inventory.get_amount(Resource.WOOD), 0.0, abs_tol=1e-6)
+
+
+def test_season_change_modifies_rate_and_output() -> None:
+    ui_bridge.init_game()
+    build_result = ui_bridge.build_building(config.FARMER)
+    building_id = build_result["building"]["id"]
+    state = get_game_state()
+    ui_bridge.assign_workers(building_id, 3)
+
+    def advance_to(target: str) -> None:
+        attempts = 0
+        while state.season != target and attempts < 12:
+            remaining = state.season_clock.get_time_left()
+            dt = remaining if remaining > 0 else state.season_clock.ticks_per_season
+            ui_bridge.tick(dt + 0.1)
+            attempts += 1
+        assert state.season == target, f"Failed to reach season {target}"
+
+    def measure(season: str) -> Tuple[float, float]:
+        advance_to(season)
+        building = state.buildings[building_id]
+        building.cycle_progress = 0.0
+        state.inventory.set_amount(Resource.SEEDS, 200.0)
+        state.inventory.set_amount(Resource.GRAIN, 0.0)
+        state.inventory.set_amount(Resource.GOLD, 500.0)
+        for _ in range(40):
+            ui_bridge.tick(1.0)
+        snapshot = state.snapshot_building(building_id)
+        return snapshot["effective_rate"], state.inventory.get_amount(Resource.GRAIN)
+
+    summer_rate, summer_output = measure("Summer")
+    winter_rate, winter_output = measure("Winter")
+
+    assert summer_rate > winter_rate
+    assert summer_output > winter_output
+
+
+def test_artisan_requires_all_inputs() -> None:
+    ui_bridge.init_game()
+    build_result = ui_bridge.build_building(config.ARTISAN)
+    building_id = build_result["building"]["id"]
+    state = get_game_state()
+
+    ui_bridge.assign_workers(building_id, 2)
+    state.inventory.set_amount(Resource.PLANK, 2.0)
+    state.inventory.set_amount(Resource.STONE, 0.0)
+    state.inventory.set_amount(Resource.GOLD, 100.0)
+
+    ui_bridge.tick(6.0)
+
+    report = state.last_production_reports.get(building_id)
+    assert report is not None
+    assert report["status"] == "stalled"
+    assert report["reason"] == "missing_input"
+    assert report.get("detail") in {Resource.STONE.value, Resource.PLANK.value}
+    assert math.isclose(state.inventory.get_amount(Resource.PLANK), 2.0, rel_tol=1e-6)
+    assert math.isclose(state.inventory.get_amount(Resource.TOOLS), 0.0, rel_tol=1e-6)
+
+
+def test_missing_input_notifications_reflect_import_and_clear() -> None:
+    ui_bridge.init_game()
+    build_result = ui_bridge.build_building(config.LUMBER_HUT)
+    building_id = build_result["building"]["id"]
+    state = get_game_state()
+
+    ui_bridge.assign_workers(building_id, 2)
+    state.inventory.set_amount(Resource.WOOD, 0.0)
+    state.inventory.set_amount(Resource.GOLD, 200.0)
+    state.inventory.set_amount(Resource.PLANK, 0.0)
+
+    channel = state.trade_manager.get_channel(Resource.WOOD)
+    channel.set_mode("import")
+    channel.set_rate(0.0)
+
+    ui_bridge.tick(4.0)
+
+    notifications = state.list_notifications()
+    assert notifications, "Expected notification for missing wood"
+    expected = "Lumber Hut parado: falta Wood (resoluble via import)"
+    assert expected in notifications
+
+    ui_bridge.tick(4.0)
+    notifications = state.list_notifications()
+    assert notifications.count(expected) == 1
+
+    state.inventory.set_amount(Resource.WOOD, 20.0)
+    ui_bridge.tick(4.0)
+    assert expected not in state.list_notifications()
 
 
 if __name__ == "__main__":

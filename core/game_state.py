@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Deque, Dict, List, Optional, Tuple
+from typing import Deque, Dict, List, Optional, Set, Tuple
 
 from . import config
 from .buildings import Building, build_from_config
@@ -30,6 +30,7 @@ class GameState:
         self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
         self._initialise_inventory()
         self.last_production_reports: Dict[int, Dict[str, object]] = {}
+        self._active_missing_notifications: Dict[Tuple[str, Resource], str] = {}
 
     # ------------------------------------------------------------------
     @classmethod
@@ -50,6 +51,7 @@ class GameState:
         Building.reset_ids()
         self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
         self.last_production_reports = {}
+        self._active_missing_notifications = {}
 
     # ------------------------------------------------------------------
     def _initialise_inventory(self) -> None:
@@ -79,10 +81,13 @@ class GameState:
         self.trade_manager.tick(dt, self.inventory, self.add_notification)
 
         self.last_production_reports = {}
+        active_missing: Set[Tuple[str, Resource]] = set()
         for building in list(self.buildings.values()):
             modifiers = self.get_production_modifiers(building)
             report = building.tick(dt, self.inventory, self.add_notification, modifiers)
             self.last_production_reports[building.id] = report
+            self._update_missing_input_notifications(building, report, active_missing)
+        self._cleanup_missing_notifications(active_missing)
 
     def get_production_modifiers(self, building: Building) -> Dict[str, float]:
         return self.season_clock.get_modifiers(building.type_key)
@@ -186,6 +191,7 @@ class GameState:
             "inventory": self.inventory_snapshot(),
             "jobs": self.snapshot_jobs(),
             "trade": self.snapshot_trade(),
+            "notifications": self.list_notifications(),
         }
 
     def production_reports_snapshot(self) -> Dict[int, Dict[str, object]]:
@@ -248,9 +254,84 @@ class GameState:
         return {
             "status": report.get("status"),
             "reason": report.get("reason"),
+            "detail": report.get("detail"),
             "consumed": dict(report.get("consumed", {})),
             "produced": dict(report.get("produced", {})),
         }
+
+    # ------------------------------------------------------------------
+    def _update_missing_input_notifications(
+        self,
+        building: Building,
+        report: Dict[str, object],
+        active_missing: Set[Tuple[str, Resource]],
+    ) -> None:
+        if report.get("status") != "stalled" or report.get("reason") != "missing_input":
+            return
+
+        detail = report.get("detail")
+        resource = self._resolve_missing_resource(building, detail)
+        if resource is None:
+            return
+
+        key = (building.type_key, resource)
+        active_missing.add(key)
+        message = self._format_missing_notification(building, resource)
+        existing = self._active_missing_notifications.get(key)
+        if existing == message:
+            return
+        if existing:
+            self._remove_notification_message(existing)
+        self._enqueue_unique_notification(message)
+        self._active_missing_notifications[key] = message
+
+    def _cleanup_missing_notifications(self, active_missing: Set[Tuple[str, Resource]]) -> None:
+        for key, message in list(self._active_missing_notifications.items()):
+            if key not in active_missing:
+                self._active_missing_notifications.pop(key, None)
+                self._remove_notification_message(message)
+
+    def _resolve_missing_resource(
+        self, building: Building, detail: object
+    ) -> Optional[Resource]:
+        if isinstance(detail, str):
+            try:
+                return Resource(detail)
+            except ValueError:
+                pass
+        if isinstance(detail, Resource):
+            return detail
+
+        for resource, amount in building.inputs_per_cycle.items():
+            if amount <= 0:
+                continue
+            if self.inventory.get_amount(resource) + 1e-9 < amount:
+                return resource
+        for resource, amount in building.maintenance_per_cycle.items():
+            if amount <= 0:
+                continue
+            if self.inventory.get_amount(resource) + 1e-9 < amount:
+                return resource
+        return None
+
+    def _format_missing_notification(self, building: Building, resource: Resource) -> str:
+        readable_resource = resource.value.title()
+        message = f"{building.name} parado: falta {readable_resource}"
+        channel = self.trade_manager.channels.get(resource)
+        if channel and channel.mode == "import":
+            message += " (resoluble via import)"
+        return message
+
+    def _enqueue_unique_notification(self, message: str) -> None:
+        if message in self.notifications:
+            return
+        self.notifications.append(message)
+
+    def _remove_notification_message(self, message: str) -> None:
+        try:
+            self.notifications.remove(message)
+        except ValueError:
+            pass
 
     def _building_pending_eta(self, building: Building, effective_rate: float) -> Optional[float]:
         if effective_rate <= 0:

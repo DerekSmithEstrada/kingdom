@@ -127,9 +127,16 @@ class Building:
         total_produced: Dict[Resource, float] = {}
         final_status = "inactive"
         final_reason: Optional[str] = "inactive"
+        final_detail: Optional[object] = None
 
         while cycles_to_attempt > 0:
-            success, consumed, produced, failure_reason, failure_detail = self._attempt_cycle(
+            (
+                success,
+                consumed,
+                produced,
+                failure_reason,
+                failure_detail,
+            ) = self._attempt_cycle(
                 inventory
             )
             if not success:
@@ -137,6 +144,7 @@ class Building:
                     self._apply_missing_input_status(failure_detail, notify)
                     final_status = "stalled"
                     final_reason = "missing_input"
+                    final_detail = failure_detail
                     self.cycle_progress = min(self.cycle_progress, self.cycle_time_sec)
                 elif failure_reason == "no_capacity":
                     self.status = "capacidad_llena"
@@ -160,12 +168,14 @@ class Building:
         report["reason"] = final_reason
         report["consumed"] = self._resources_to_payload(total_consumed)
         report["produced"] = self._resources_to_payload(total_produced)
+        report["detail"] = final_detail
 
         if final_status == "produced":
             self.status = "ok"
         self.production_report = {
             "status": report["status"],
             "reason": report["reason"],
+            "detail": report["detail"],
             "consumed": dict(report["consumed"]),
             "produced": dict(report["produced"]),
         }
@@ -212,9 +222,13 @@ class Building:
         inputs = dict(self.inputs_per_cycle)
 
         if maintenance and not inventory.has(maintenance):
-            return False, {}, {}, "missing_input", "maintenance"
+            missing = self._first_missing_resource(maintenance, inventory)
+            detail = missing.value if isinstance(missing, Resource) else "maintenance"
+            return False, {}, {}, "missing_input", detail
         if inputs and not inventory.has(inputs):
-            return False, {}, {}, "missing_input", "inputs"
+            missing = self._first_missing_resource(inputs, inventory)
+            detail = missing.value if isinstance(missing, Resource) else "inputs"
+            return False, {}, {}, "missing_input", detail
 
         combined_inputs = self._combine_resources(inputs, maintenance)
         outputs = dict(self.outputs_per_cycle)
@@ -227,7 +241,9 @@ class Building:
 
         if combined_inputs and not inventory.consume(combined_inputs):
             self._restore_inventory(inventory, before)
-            return False, {}, {}, "missing_input", None
+            missing = self._first_missing_resource(combined_inputs, inventory)
+            detail = missing.value if isinstance(missing, Resource) else None
+            return False, {}, {}, "missing_input", detail
 
         residual = inventory.add(outputs)
         if residual:
@@ -269,7 +285,22 @@ class Building:
             "consumed": {},
             "produced": {},
             "reason": "inactive",
+            "detail": None,
         }
+
+    @staticmethod
+    def _first_missing_resource(
+        requirements: Mapping[Resource, float], inventory: Inventory
+    ) -> Optional[Resource]:
+        for resource, amount in requirements.items():
+            if amount <= 0:
+                continue
+            if inventory.get_amount(resource) + 1e-9 < amount:
+                return resource
+        for resource, amount in requirements.items():
+            if amount > 0:
+                return resource
+        return None
 
     # ------------------------------------------------------------------
     def to_snapshot(self) -> Dict[str, object]:
