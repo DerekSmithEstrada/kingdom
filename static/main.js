@@ -1,30 +1,303 @@
 (function () {
   const STORAGE_KEY = "idle-village-state-v1";
-  const shouldForceReset =
+
+  const searchParams =
     typeof window !== "undefined"
       ? (() => {
           try {
-            const params = new URLSearchParams(window.location.search);
-            const value = params.get("reset");
-            if (!value) {
-              return false;
-            }
-            const normalised = value.trim().toLowerCase();
-            return ["1", "true", "yes"].includes(normalised);
+            return new URLSearchParams(window.location.search);
           } catch (error) {
-            return false;
+            return null;
           }
         })()
-      : false;
+      : null;
+
+  function parseFlag(value) {
+    if (typeof value !== "string") {
+      return false;
+    }
+    const normalised = value.trim().toLowerCase();
+    if (!normalised) {
+      return false;
+    }
+    if (["0", "false", "no", "off"].includes(normalised)) {
+      return false;
+    }
+    return ["1", "true", "yes", "on"].includes(normalised);
+  }
+
+  const verifyModeEnabled = searchParams ? parseFlag(searchParams.get("verify")) : false;
+
+  const shouldForceReset =
+    verifyModeEnabled || (searchParams ? parseFlag(searchParams.get("reset")) : false);
+
+  const verifyState = (() => {
+    const base = {
+      enabled: Boolean(verifyModeEnabled),
+      log: [],
+      definitions: [
+        { key: "firstRequest", label: "Primer request = POST /api/init?reset=1" },
+        { key: "initialResources", label: "Recursos visibles en 0 en primer render" },
+        { key: "woodcutterVisible", label: "Sólo Woodcutter Camp, workers=0" },
+        { key: "woodGain", label: "Con 1 worker y 10 ticks: Wood +1.0 (±0.01)" },
+        { key: "otherResourcesZero", label: "Otros recursos permanecen en 0" },
+      ],
+      checks: new Map(),
+      rowElements: new Map(),
+      overlay: null,
+      firstRequest: null,
+      latestResources: null,
+    };
+
+    base.definitions.forEach((definition) => {
+      base.checks.set(definition.key, {
+        key: definition.key,
+        label: definition.label,
+        status: "pending",
+        detail: "",
+      });
+    });
+
+    return base;
+  })();
+
+  if (verifyState.enabled && typeof window !== "undefined") {
+    window.__verifyLog = verifyState.log;
+  }
+
+  function cloneForLog(value) {
+    if (value === null || value === undefined) {
+      return value;
+    }
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (error) {
+      return value;
+    }
+  }
+
+  function stringifyDetail(detail) {
+    if (detail === null || detail === undefined) {
+      return "";
+    }
+    if (typeof detail === "string") {
+      return detail;
+    }
+    try {
+      return JSON.stringify(detail);
+    } catch (error) {
+      return String(detail);
+    }
+  }
+
+  function pushVerifyLog(step, detail) {
+    if (!verifyState.enabled) {
+      return;
+    }
+    const entry = {
+      step,
+      detail: cloneForLog(detail),
+      timestamp: new Date().toISOString(),
+    };
+    verifyState.log.push(entry);
+    if (typeof console !== "undefined") {
+      const logger =
+        typeof console.debug === "function" ? console.debug : console.log;
+      if (typeof logger === "function") {
+        logger.call(console, "[Idle Village][VERIFY]", step, detail);
+      }
+    }
+  }
+
+  function applyVerifyCheckToRow(key) {
+    if (!verifyState.enabled) {
+      return;
+    }
+    const entry = verifyState.checks.get(key);
+    const elements = verifyState.rowElements.get(key);
+    if (!entry || !elements) {
+      return;
+    }
+    const { row, statusCell } = elements;
+    statusCell.classList.remove(
+      "verify-overlay__status--pass",
+      "verify-overlay__status--fail"
+    );
+    row.classList.remove(
+      "verify-overlay__row--pass",
+      "verify-overlay__row--fail"
+    );
+    if (entry.status === "pass") {
+      statusCell.textContent = "PASS";
+      statusCell.classList.add("verify-overlay__status--pass");
+      row.classList.add("verify-overlay__row--pass");
+    } else if (entry.status === "fail") {
+      statusCell.textContent = "FAIL";
+      statusCell.classList.add("verify-overlay__status--fail");
+      row.classList.add("verify-overlay__row--fail");
+    } else {
+      statusCell.textContent = "—";
+    }
+    if (entry.detail) {
+      statusCell.title = entry.detail;
+    } else {
+      statusCell.removeAttribute("title");
+    }
+  }
+
+  function updateVerifyCheck(key, pass, detail) {
+    if (!verifyState.enabled) {
+      return;
+    }
+    const entry = verifyState.checks.get(key);
+    if (!entry) {
+      return;
+    }
+    if (pass === null) {
+      entry.status = "pending";
+    } else {
+      entry.status = pass ? "pass" : "fail";
+    }
+    entry.detail = stringifyDetail(detail);
+    applyVerifyCheckToRow(key);
+    if (pass === null) {
+      pushVerifyLog("check-pending", { key, detail: entry.detail });
+    } else {
+      pushVerifyLog(pass ? "check-pass" : "check-fail", {
+        key,
+        detail: entry.detail,
+      });
+    }
+  }
+
+  function ensureVerifyOverlay() {
+    if (!verifyState.enabled || typeof document === "undefined") {
+      return;
+    }
+    if (verifyState.overlay) {
+      return;
+    }
+    const overlay = document.createElement("aside");
+    overlay.className = "verify-overlay";
+
+    const header = document.createElement("div");
+    header.className = "verify-overlay__header";
+
+    const title = document.createElement("span");
+    title.className = "verify-overlay__title";
+    title.textContent = "Modo verificación";
+
+    const consoleButton = document.createElement("button");
+    consoleButton.type = "button";
+    consoleButton.className = "verify-overlay__console";
+    consoleButton.textContent = "Ver consola";
+    consoleButton.addEventListener("click", () => {
+      pushVerifyLog("console-requested", { entries: verifyState.log.length });
+      if (typeof console !== "undefined") {
+        if (typeof console.table === "function") {
+          console.table(verifyState.log);
+        } else if (typeof console.log === "function") {
+          console.log("Idle Village verification log", verifyState.log);
+        }
+      }
+    });
+
+    header.append(title, consoleButton);
+
+    const table = document.createElement("table");
+    table.className = "verify-overlay__table";
+    const tbody = document.createElement("tbody");
+
+    verifyState.definitions.forEach((definition) => {
+      const row = document.createElement("tr");
+      row.className = "verify-overlay__row";
+      row.dataset.checkKey = definition.key;
+
+      const labelCell = document.createElement("td");
+      labelCell.className = "verify-overlay__label";
+      labelCell.textContent = definition.label;
+
+      const statusCell = document.createElement("td");
+      statusCell.className = "verify-overlay__status";
+      statusCell.textContent = "—";
+
+      row.append(labelCell, statusCell);
+      tbody.appendChild(row);
+      verifyState.rowElements.set(definition.key, { row, statusCell });
+      applyVerifyCheckToRow(definition.key);
+    });
+
+    table.appendChild(tbody);
+    overlay.append(header, table);
+    document.body.appendChild(overlay);
+    verifyState.overlay = overlay;
+  }
+
+  if (verifyState.enabled) {
+    pushVerifyLog("verify-mode", { shouldForceReset });
+    ensureVerifyOverlay();
+  }
+
+  if (verifyState.enabled && typeof fetch === "function") {
+    const originalFetch = fetch.bind(window);
+    window.fetch = async function patchedFetch(resource, options = {}) {
+      const method = options && options.method ? String(options.method).toUpperCase() : "GET";
+      const requestUrl =
+        typeof resource === "string"
+          ? resource
+          : resource && typeof resource.url === "string"
+          ? resource.url
+          : "";
+      let path = requestUrl;
+      if (typeof requestUrl === "string" && requestUrl) {
+        try {
+          const parsed = new URL(requestUrl, window.location.origin);
+          path = `${parsed.pathname}${parsed.search}`;
+        } catch (error) {
+          path = requestUrl;
+        }
+      }
+
+      if (!verifyState.firstRequest) {
+        verifyState.firstRequest = { method, path };
+        const matches = method === "POST" && path === "/api/init?reset=1";
+        updateVerifyCheck("firstRequest", matches, `Observado ${method} ${path}`);
+        pushVerifyLog("first-request", { method, path });
+      }
+
+      try {
+        const response = await originalFetch(resource, options);
+        if (!response.ok) {
+          pushVerifyLog("fetch-nok", {
+            method,
+            path,
+            status: response.status,
+          });
+        }
+        return response;
+      } catch (error) {
+        pushVerifyLog("fetch-error", {
+          method,
+          path,
+          message: error && error.message ? error.message : String(error),
+        });
+        throw error;
+      }
+    };
+  }
 
   const persistedSnapshot = (() => {
     if (typeof window === "undefined") {
       return null;
     }
     if (shouldForceReset) {
+      pushVerifyLog("cache-reset", { key: STORAGE_KEY });
       try {
         window.localStorage.removeItem(STORAGE_KEY);
       } catch (error) {
+        pushVerifyLog("cache-reset-error", {
+          message: error && error.message ? error.message : String(error),
+        });
         if (typeof console !== "undefined" && typeof console.warn === "function") {
           console.warn("Idle Village: failed to purge cached state", error);
         }
@@ -1818,6 +2091,79 @@
     }
   }
 
+  function escapeSelectorValue(value) {
+    const stringValue = String(value);
+    if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+      return CSS.escape(stringValue);
+    }
+    return stringValue.replace(/"/g, '\\"');
+  }
+
+  function parseNumericText(text) {
+    if (typeof text !== "string") {
+      return null;
+    }
+    const cleaned = text.replace(/\s+/g, "");
+    const match = cleaned.match(/-?\d+(?:[.,]\d+)?/);
+    if (!match) {
+      return null;
+    }
+    const normalized = match[0].replace(/,(?=\d{3}(?:[^\d]|$))/g, "").replace(",", ".");
+    const numeric = Number(normalized);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  function extractChipNumber(resourceKey) {
+    if (typeof document === "undefined") {
+      return null;
+    }
+    const escaped = escapeSelectorValue(resourceKey);
+    const baseSelector = `.chip[data-resource="${escaped}"]`;
+    const valueElement =
+      document.querySelector(`${baseSelector} .value`) ||
+      document.querySelector(baseSelector);
+    if (!valueElement) {
+      return null;
+    }
+    return parseNumericText(valueElement.textContent || "");
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function waitForCondition(predicate, options = {}) {
+    if (typeof predicate !== "function") {
+      throw new Error("Predicate must be a function");
+    }
+    const { timeout = 3000, interval = 50, description = "condición" } = options;
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      const result = predicate();
+      if (result) {
+        return result;
+      }
+      await delay(interval);
+    }
+    throw new Error(`Timeout esperando ${description}`);
+  }
+
+  async function runVerifyCheck(key, executor) {
+    if (!verifyState.enabled) {
+      return null;
+    }
+    try {
+      const detail = await executor();
+      updateVerifyCheck(key, true, detail);
+      return detail;
+    } catch (error) {
+      const message = error && error.message ? error.message : String(error);
+      updateVerifyCheck(key, false, message);
+      pushVerifyLog("check-error", { key, message });
+      throw error;
+    }
+  }
+
   function updateResourcesFromPayload(payload) {
     if (!payload || typeof payload !== "object" || payload === null) {
       return false;
@@ -1937,6 +2283,9 @@
 
   async function loadSeasonFromStateEndpoint() {
     const payload = await fetchJson("/api/state");
+    if (verifyState.enabled) {
+      pushVerifyLog("season-sync:state-response", payload);
+    }
     if (!payload) {
       return false;
     }
@@ -1947,24 +2296,280 @@
     return Boolean(payload.season);
   }
 
+  async function runVerifySuite() {
+    if (!verifyState.enabled) {
+      return;
+    }
+
+    pushVerifyLog("suite-start", { shouldForceReset, hasPersistedState });
+    verifyState.latestResources = null;
+
+    const safeRun = async (key, executor) => {
+      try {
+        return await runVerifyCheck(key, executor);
+      } catch (error) {
+        return null;
+      }
+    };
+
+    try {
+      await waitForCondition(
+        () =>
+          typeof document !== "undefined" &&
+          document.querySelectorAll(".chip[data-resource]").length > 0,
+        { timeout: 3000, description: "primer render de recursos" }
+      );
+    } catch (error) {
+      const message = error && error.message ? error.message : String(error);
+      updateVerifyCheck("initialResources", false, message);
+      pushVerifyLog("suite-wait-chips-error", { message });
+    }
+
+    await safeRun("initialResources", () => {
+      if (typeof document === "undefined") {
+        throw new Error("Documento no disponible");
+      }
+      const chips = Array.from(
+        document.querySelectorAll(".chip[data-resource]")
+      );
+      if (!chips.length) {
+        throw new Error("No se encontraron chips de recursos");
+      }
+      const snapshot = chips.map((chip) => {
+        const resource = chip.getAttribute("data-resource") || "";
+        const valueElement = chip.querySelector(".value") || chip;
+        const raw = valueElement.textContent || "";
+        const numeric = parseNumericText(raw);
+        return { resource, raw, numeric };
+      });
+      pushVerifyLog("initial-resources", snapshot);
+      const nonZero = snapshot.filter(
+        (entry) => entry.numeric === null || Math.abs(entry.numeric) > 1e-6
+      );
+      if (nonZero.length > 0) {
+        const labels = nonZero
+          .map((entry) => entry.resource || entry.raw.trim())
+          .filter(Boolean);
+        throw new Error(`Valores distintos de 0: ${labels.join(", ")}`);
+      }
+      return "Todos los recursos visibles muestran 0";
+    });
+
+    await safeRun("woodcutterVisible", () => {
+      if (typeof document === "undefined") {
+        throw new Error("Documento no disponible");
+      }
+      const allCards = Array.from(
+        document.querySelectorAll("[data-category] .building-card")
+      );
+      const visibleCards = allCards.filter((card) => {
+        if (!card) {
+          return false;
+        }
+        const rect = card.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+      const cards = visibleCards.length ? visibleCards : allCards;
+      if (cards.length !== 1) {
+        throw new Error(
+          `Se esperaba 1 edificio visible, se encontraron ${cards.length}`
+        );
+      }
+      const card = cards[0];
+      const nameNode = card.querySelector("h3");
+      const name = nameNode ? nameNode.textContent.trim() : "";
+      const workerInput = card.querySelector("input[data-building-input]");
+      const workers = workerInput ? Number(workerInput.value) : NaN;
+      pushVerifyLog("woodcutter-visible", { name, workers });
+      if (!name || name.toLowerCase().indexOf("woodcutter") === -1) {
+        throw new Error(`Edificio visible inesperado: ${name || "desconocido"}`);
+      }
+      if (!Number.isFinite(workers) || Math.abs(workers) > 1e-6) {
+        throw new Error(`Trabajadores esperados 0, observado ${workers}`);
+      }
+      return `${name} con ${workers} trabajadores`;
+    });
+
+    let woodCheckPassed = false;
+
+    await safeRun("woodGain", async () => {
+      const findWoodcutter = () =>
+        state.buildings.find((entry) => {
+          if (!entry) return false;
+          const type = (entry.type || entry.id || "").toString().toLowerCase();
+          const name = (entry.name || "").toString().toLowerCase();
+          return type.includes("woodcutter") || name.includes("woodcutter");
+        });
+
+      let building = findWoodcutter();
+      if (!building || typeof building.id !== "number") {
+        const refreshed = await fetchJson("/api/state");
+        pushVerifyLog("woodGain-refresh", refreshed);
+        if (refreshed) {
+          updateBuildingsFromPayload(refreshed);
+          if (refreshed.resources) {
+            updateResourcesFromPayload(refreshed);
+          }
+          building = findWoodcutter();
+        }
+      }
+
+      if (!building || typeof building.id !== "number") {
+        throw new Error("No se encontró Woodcutter Camp con un ID válido");
+      }
+
+      pushVerifyLog("assign-worker-request", { buildingId: building.id });
+      const assignPayload = await fetchJson(`/api/buildings/${building.id}/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workers: 1 }),
+      });
+      pushVerifyLog("assign-worker-response", assignPayload);
+      if (!assignPayload || assignPayload.ok !== true) {
+        throw new Error("La asignación de trabajadores no fue exitosa");
+      }
+      if (assignPayload.building) {
+        updateBuildingsFromPayload({ buildings: [assignPayload.building] });
+      }
+
+      let latestPayload = null;
+      for (let index = 0; index < 10; index += 1) {
+        const tickPayload = await fetchJson("/api/tick", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dt: 1 }),
+        });
+        pushVerifyLog("tick", { index: index + 1, payload: tickPayload });
+        if (!tickPayload || tickPayload.ok !== true) {
+          throw new Error(`Tick ${index + 1} falló`);
+        }
+        latestPayload = tickPayload;
+        applyServerSnapshot(tickPayload);
+      }
+
+      verifyState.latestResources = latestPayload ? latestPayload.resources || null : null;
+
+      try {
+        await waitForCondition(
+          () => {
+            const value = extractChipNumber("wood");
+            return value !== null && value >= 0.99;
+          },
+          { timeout: 2000, description: "actualización de Wood" }
+        );
+      } catch (error) {
+        pushVerifyLog("wood-value-wait-error", {
+          message: error && error.message ? error.message : String(error),
+        });
+      }
+
+      const woodValue = extractChipNumber("wood");
+      if (woodValue === null) {
+        throw new Error("No se pudo leer el valor del chip de Wood");
+      }
+      if (Math.abs(woodValue - 1) > 0.01) {
+        throw new Error(`Wood esperado ≈1.0, observado ${woodValue.toFixed(2)}`);
+      }
+      woodCheckPassed = true;
+      return `Wood observado ${woodValue.toFixed(2)}`;
+    });
+
+    await safeRun("otherResourcesZero", () => {
+      const resourcesSnapshot = verifyState.latestResources;
+      if (resourcesSnapshot && Object.keys(resourcesSnapshot).length > 0) {
+        const offenders = Object.entries(resourcesSnapshot).filter(
+          ([key, value]) => {
+            if (typeof key !== "string") {
+              return false;
+            }
+            if (key.toLowerCase() === "wood") {
+              return false;
+            }
+            const numeric = Number(value);
+            return Number.isFinite(numeric) && Math.abs(numeric) > 1e-6;
+          }
+        );
+        if (offenders.length > 0) {
+          throw new Error(
+            `Recursos distintos de 0: ${offenders
+              .map(([key, value]) => `${key}:${value}`)
+              .join(", ")}`
+          );
+        }
+        return "El snapshot remoto mantiene los recursos en 0";
+      }
+
+      const stateEntries = state && state.resources ? Object.entries(state.resources) : [];
+      if (!stateEntries.length) {
+        throw new Error("No hay recursos en el estado local para validar");
+      }
+      const offenders = stateEntries.filter(([key, value]) => {
+        if (key === "wood") {
+          return false;
+        }
+        const numeric = Number(value);
+        return Number.isFinite(numeric) && Math.abs(numeric) > 1e-6;
+      });
+      if (offenders.length > 0) {
+        throw new Error(
+          `Estado local con recursos distintos de 0: ${offenders
+            .map(([key, value]) => `${key}:${value}`)
+            .join(", ")}`
+        );
+      }
+      return "Los recursos locales permanecen en 0";
+    });
+
+    if (!woodCheckPassed) {
+      pushVerifyLog("suite-warning", {
+        message: "No se pudo validar la producción de Wood",
+      });
+    }
+
+    pushVerifyLog("suite-complete", { woodCheckPassed });
+  }
+
   async function initialiseSeasonSync() {
+    if (verifyState.enabled) {
+      pushVerifyLog("season-sync:start", {
+        shouldForceReset,
+        hasPersistedState,
+      });
+    }
     if (shouldForceReset || !hasPersistedState) {
+      if (verifyState.enabled) {
+        pushVerifyLog("season-sync:force-init", {
+          reason: shouldForceReset ? "query" : "no-cache",
+        });
+      }
       const initPayload = await fetchJson("/api/init?reset=1", { method: "POST" });
+      if (verifyState.enabled) {
+        pushVerifyLog("season-sync:force-init-response", initPayload);
+      }
       if (initPayload) {
         applyServerSnapshot(initPayload, { persist: true });
       }
     }
 
     const loaded = await loadSeasonFromStateEndpoint();
+    if (verifyState.enabled) {
+      pushVerifyLog("season-sync:state-loaded", { loaded });
+    }
     if (loaded) {
       return;
     }
 
     const initPayload = await fetchJson("/api/init", { method: "POST" });
+    if (verifyState.enabled) {
+      pushVerifyLog("season-sync:init-response", initPayload);
+    }
     if (initPayload) {
       applyServerSnapshot(initPayload, { persist: !hasPersistedState });
     }
-    await loadSeasonFromStateEndpoint();
+    const finalLoad = await loadSeasonFromStateEndpoint();
+    if (verifyState.enabled) {
+      pushVerifyLog("season-sync:state-final", { loaded: finalLoad });
+    }
   }
 
   function startSeasonTickLoop() {
@@ -2031,5 +2636,19 @@
   updateJobsCount();
   updateChips();
   renderSeason(state.season);
-  initialiseSeasonSync().then(startSeasonTickLoop);
+
+  const initialisationPromise = initialiseSeasonSync();
+  if (verifyState.enabled) {
+    initialisationPromise
+      .then(() => runVerifySuite())
+      .catch((error) => {
+        const message = error && error.message ? error.message : String(error);
+        pushVerifyLog("suite-error", { message });
+      })
+      .finally(() => {
+        startSeasonTickLoop();
+      });
+  } else {
+    initialisationPromise.then(startSeasonTickLoop);
+  }
 })();
