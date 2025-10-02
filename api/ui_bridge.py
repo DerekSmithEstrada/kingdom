@@ -32,16 +32,27 @@ def _error_response(code: str, message: str) -> Dict[str, object]:
     }
 
 
-def init_game() -> Dict[str, object]:
+def _should_reset(flag: object) -> bool:
+    if flag is None:
+        return True
+    if isinstance(flag, str):
+        return flag.strip().lower() not in {"0", "false", "no"}
+    return bool(flag)
+
+
+def _state_payload(state) -> Dict[str, object]:
+    payload = state.snapshot_state()
+    payload["production_report"] = state.production_reports_snapshot()
+    return payload
+
+
+def init_game(force_reset: object = None) -> Dict[str, object]:
     """Initialise or reset the global game state using configuration defaults."""
 
     state = get_game_state()
-    state.reset()
-    return _success_response(
-        season=_season_snapshot(state),
-        buildings=state.snapshot_buildings(),
-        production_report=state.production_reports_snapshot(),
-    )
+    if _should_reset(force_reset):
+        state.reset()
+    return _success_response(**_state_payload(state))
 
 
 def tick(dt: float) -> Dict[str, object]:
@@ -49,23 +60,14 @@ def tick(dt: float) -> Dict[str, object]:
 
     state = get_game_state()
     state.tick(max(0.0, float(dt)))
-    return _success_response(
-        season=_season_snapshot(state),
-        buildings=state.snapshot_buildings(),
-        production_report=state.production_reports_snapshot(),
-    )
+    return _success_response(**_state_payload(state))
 
 
 def get_state() -> Dict[str, object]:
     """Return a snapshot of the overall game state."""
 
     state = get_game_state()
-    return _success_response(
-        season=_season_snapshot(state),
-        buildings=state.snapshot_buildings(),
-        production_report=state.production_reports_snapshot(),
-        notifications=state.list_notifications(),
-    )
+    return _success_response(**_state_payload(state))
 
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ from core.timeclock import SeasonClock
 
 def run_all_tests() -> None:
     test_initial_inventory_seed()
+    test_starting_woodcutter_requires_workers()
     test_building_construction()
     test_worker_assignments()
     test_production_cycle()
@@ -52,14 +53,45 @@ def grant_construction_resources(type_key: str, multiplier: float = 1.0) -> None
 
 
 def test_initial_inventory_seed() -> None:
-    ui_bridge.init_game()
+    response = ui_bridge.init_game()
     snapshot = ui_bridge.get_inventory_snapshot()
     for resource in Resource:
         amount = snapshot[resource.value]["amount"]
-        if resource is Resource.GOLD:
-            assert math.isclose(amount, 10.0, rel_tol=1e-9, abs_tol=1e-9)
-        else:
-            assert math.isclose(amount, 0.0, rel_tol=1e-9, abs_tol=1e-9)
+        assert math.isclose(amount, 0.0, rel_tol=1e-9, abs_tol=1e-9)
+
+    assert response["ok"]
+    resources_payload = response.get("resources", {})
+    assert resources_payload.get(Resource.GOLD.value, 0.0) == 0.0
+
+    state = get_game_state()
+    assert len(state.buildings) == 1
+    building = next(iter(state.buildings.values()))
+    assert building.type_key == config.WOODCUTTER_CAMP
+    assert building.assigned_workers == 0
+
+
+def test_starting_woodcutter_requires_workers() -> None:
+    ui_bridge.init_game()
+    state = get_game_state()
+    assert len(state.buildings) == 1
+    building = next(iter(state.buildings.values()))
+
+    wood_before = state.inventory.get_amount(Resource.WOOD)
+    for _ in range(10):
+        ui_bridge.tick(1.0)
+    wood_after_no_workers = state.inventory.get_amount(Resource.WOOD)
+    assert math.isclose(wood_after_no_workers, wood_before, rel_tol=1e-9, abs_tol=1e-9)
+
+    ui_bridge.assign_workers(building.id, 1)
+    for _ in range(10):
+        ui_bridge.tick(1.0)
+    wood_after_assignment = state.inventory.get_amount(Resource.WOOD)
+    assert math.isclose(
+        wood_after_assignment,
+        wood_before + 1.0,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    )
 
 
 def test_building_construction() -> None:
@@ -333,6 +365,7 @@ def test_atomic_cycle_reports_consumption() -> None:
 
     ui_bridge.assign_workers(building_id, 2)
     state.inventory.set_amount(Resource.WOOD, 20.0)
+    state.inventory.set_amount(Resource.GOLD, 50.0)
     state.inventory.set_amount(Resource.PLANK, 0.0)
     initial_wood = state.inventory.get_amount(Resource.WOOD)
     initial_gold = state.inventory.get_amount(Resource.GOLD)

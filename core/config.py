@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Mapping, Optional
+from typing import Dict, Mapping, Optional, Tuple
 
 from .resources import ALL_RESOURCES, Resource, normalise_mapping
 
@@ -138,7 +138,10 @@ CAPACIDADES: Dict[Resource, float] = {
 WORKERS_INICIALES: int = 20
 
 STARTING_RESOURCES: Dict[Resource, float] = {resource: 0.0 for resource in ALL_RESOURCES}
-STARTING_RESOURCES[Resource.GOLD] = 10.0
+
+STARTING_BUILDINGS: Tuple[Mapping[str, object], ...] = (
+    {"type": WOODCUTTER_CAMP, "workers": 0, "enabled": True},
+)
 
 SEASON_MODIFIERS: Dict[str, Dict[str, float]] = {
     "Spring": {

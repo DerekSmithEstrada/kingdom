@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Deque, Dict, List, Optional, Set, Tuple
+from typing import Deque, Dict, List, Mapping, Optional, Set, Tuple
 
 from . import config
 from .buildings import Building, build_from_config
@@ -27,10 +27,12 @@ class GameState:
         self.inventory.set_notifier(self.add_notification)
         self.worker_pool = WorkerPool(config.WORKERS_INICIALES)
         self.buildings: Dict[int, Building] = {}
+        Building.reset_ids()
         self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
         self._initialise_inventory()
         self.last_production_reports: Dict[int, Dict[str, object]] = {}
         self._active_missing_notifications: Dict[Tuple[str, Resource], str] = {}
+        self._initialise_starting_buildings()
 
     # ------------------------------------------------------------------
     @classmethod
@@ -52,6 +54,7 @@ class GameState:
         self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
         self.last_production_reports = {}
         self._active_missing_notifications = {}
+        self._initialise_starting_buildings()
 
     # ------------------------------------------------------------------
     def _initialise_inventory(self) -> None:
@@ -61,6 +64,48 @@ class GameState:
             capacity = config.CAPACIDADES.get(resource)
             if capacity is not None:
                 self.inventory.set_capacity(resource, float(capacity))
+
+    def _initialise_starting_buildings(self) -> None:
+        for entry in config.STARTING_BUILDINGS:
+            type_key: Optional[str] = None
+            workers = 0
+            enabled = True
+
+            if isinstance(entry, Mapping):
+                raw_type = entry.get("type")
+                if isinstance(raw_type, str):
+                    type_key = raw_type
+                if "workers" in entry:
+                    try:
+                        workers = int(entry.get("workers", 0))
+                    except (TypeError, ValueError):
+                        workers = 0
+                if "enabled" in entry:
+                    enabled = bool(entry.get("enabled", True))
+            elif isinstance(entry, (tuple, list)) and entry:
+                raw_type = entry[0]
+                if isinstance(raw_type, str):
+                    type_key = raw_type
+                if len(entry) > 1:
+                    try:
+                        workers = int(entry[1])
+                    except (TypeError, ValueError):
+                        workers = 0
+            elif isinstance(entry, str):
+                type_key = entry
+
+            if not type_key or type_key not in config.BUILDING_RECIPES:
+                continue
+
+            building = build_from_config(type_key)
+            building.enabled = enabled
+            assigned = max(0, min(int(workers), building.max_workers))
+            building.assigned_workers = assigned
+            self.buildings[building.id] = building
+            self.worker_pool.register_building(building)
+            if assigned > 0:
+                self.worker_pool.set_assignment(building, assigned)
+            self.last_production_reports[building.id] = building.production_report
 
     def add_notification(self, message: str) -> None:
         self.notifications.append(message)
@@ -189,6 +234,7 @@ class GameState:
             "season": self.season_clock.to_dict(),
             "buildings": self.snapshot_buildings(),
             "inventory": self.inventory_snapshot(),
+            "resources": self.resources_snapshot(),
             "jobs": self.snapshot_jobs(),
             "trade": self.snapshot_trade(),
             "notifications": self.list_notifications(),
@@ -218,6 +264,12 @@ class GameState:
 
     def inventory_snapshot(self) -> Dict[str, Dict[str, float | None]]:
         return self.inventory.snapshot()
+
+    def resources_snapshot(self) -> Dict[str, float]:
+        return {
+            resource.value: self.inventory.get_amount(resource)
+            for resource in ALL_RESOURCES
+        }
 
     # ------------------------------------------------------------------
     def _sync_season_state(self) -> None:

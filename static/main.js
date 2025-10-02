@@ -1,5 +1,31 @@
 (function () {
   const STORAGE_KEY = "idle-village-state-v1";
+  const shouldForceReset =
+    typeof window !== "undefined"
+      ? (() => {
+          try {
+            const params = new URLSearchParams(window.location.search);
+            const value = params.get("reset");
+            if (!value) {
+              return false;
+            }
+            const normalised = value.trim().toLowerCase();
+            return ["1", "true", "yes"].includes(normalised);
+          } catch (error) {
+            return false;
+          }
+        })()
+      : false;
+
+  if (shouldForceReset && typeof window !== "undefined") {
+    try {
+      window.localStorage.removeItem(STORAGE_KEY);
+    } catch (error) {
+      if (typeof console !== "undefined" && typeof console.warn === "function") {
+        console.warn("Idle Village: failed to purge cached state", error);
+      }
+    }
+  }
 
   const resourceIconMap = {
     gold: "🪙",
@@ -251,13 +277,17 @@
 
   const defaultState = {
     resources: {
-      happiness: 82,
-      gold: 320,
-      wood: 210,
-      planks: 46,
-      stone: 138,
-      tools: 12,
-      wheat: 75,
+      happiness: 0,
+      gold: 0,
+      wood: 0,
+      planks: 0,
+      stone: 0,
+      tools: 0,
+      wheat: 0,
+      ore: 0,
+      seeds: 0,
+      water: 0,
+      hops: 0,
     },
     population: {
       total: 20,
@@ -270,89 +300,14 @@
         name: "Woodcutter Camp",
         category: "wood",
         built: 1,
-        active: 1,
-        capacityPerBuilding: 2,
+        active: 0,
+        capacityPerBuilding: 10,
         icon: "🪓",
         inputs: {},
-        outputs: { wood: 1 },
-        effective_rate: 1,
-        can_produce: true,
-        reason: null,
-        pending_eta: null,
-        last_report: {
-          status: "running",
-          reason: null,
-          detail: null,
-          consumed: {},
-          produced: { wood: 1 },
-        },
-        cycle_time: 2,
-      },
-      {
-        id: "lumber-hut",
-        type: "lumber_hut",
-        job: "artisan",
-        name: "Lumber Hut",
-        category: "wood",
-        built: 2,
-        active: 4,
-        capacityPerBuilding: 2,
-        icon: "🏚️",
-        inputs: { wood: 2 },
-        outputs: { planks: 1 },
-        effective_rate: 0.5,
-        can_produce: true,
-        reason: null,
-        pending_eta: null,
-        last_report: {
-          status: "running",
-          reason: null,
-          detail: null,
-          consumed: { wood: 2 },
-          produced: { planks: 1 },
-        },
-        cycle_time: 4,
-      },
-      {
-        id: "stone-quarry",
-        type: "miner",
-        job: "miner",
-        name: "Stone Quarry",
-        category: "stone",
-        built: 1,
-        active: 3,
-        capacityPerBuilding: 3,
-        icon: "⛏️",
-        inputs: {},
-        outputs: { stone: 1 },
-        effective_rate: 0.75,
-        can_produce: true,
-        reason: null,
-        pending_eta: null,
-        last_report: {
-          status: "running",
-          reason: null,
-          detail: null,
-          consumed: {},
-          produced: { stone: 1 },
-        },
-        cycle_time: 5,
-      },
-      {
-        id: "wheat-farm",
-        type: "farmer",
-        job: "farmer",
-        name: "Wheat Farm",
-        category: "crops",
-        built: 0,
-        active: 0,
-        capacityPerBuilding: 2,
-        icon: "🌾",
-        inputs: { seeds: 1 },
-        outputs: { wheat: 3 },
+        outputs: { wood: 0.1 },
         effective_rate: 0,
         can_produce: false,
-        reason: "inactive",
+        reason: "no_workers",
         pending_eta: null,
         last_report: {
           status: "inactive",
@@ -361,20 +316,15 @@
           consumed: {},
           produced: {},
         },
-        cycle_time: 8,
+        cycle_time: 1,
       },
     ],
     jobs: [
-      { id: "forester", name: "Forester", assigned: 4, max: 6, icon: "🌲" },
-      { id: "miner", name: "Miner", assigned: 3, max: 5, icon: "⛏️" },
-      { id: "farmer", name: "Farmer", assigned: 5, max: 6, icon: "🧑‍🌾" },
-      { id: "artisan", name: "Artisan", assigned: 3, max: 5, icon: "🛠️" },
+      { id: "forester", name: "Forester", assigned: 0, max: 10, icon: "🌲" },
     ],
     trade: [
-      { id: "gold", label: "Gold", export: 8, import: 2, icon: "🪙" },
-      { id: "planks", label: "Planks", export: 4, import: 3, icon: "🪵" },
-      { id: "tools", label: "Tools", export: 2, import: 1, icon: "🛠️" },
-      { id: "wheat", label: "Wheat", export: 5, import: 6, icon: "🌾" },
+      { id: "gold", label: "Gold", export: 0, import: 0, icon: "🪙" },
+      { id: "wood", label: "Wood", export: 0, import: 0, icon: "🪵" },
     ],
     season: {
       season_name: "Spring",
@@ -389,6 +339,9 @@
   }
 
   function loadState() {
+    if (shouldForceReset || typeof window === "undefined") {
+      return clone(defaultState);
+    }
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (!raw) {
@@ -412,7 +365,9 @@
           : clone(defaultState.season),
       };
     } catch (error) {
-      console.warn("Idle Village: failed to load state", error);
+      if (typeof console !== "undefined" && typeof console.warn === "function") {
+        console.warn("Idle Village: failed to load state", error);
+      }
       return clone(defaultState);
     }
   }
@@ -426,10 +381,15 @@
   }
 
   function saveState() {
+    if (typeof window === "undefined") {
+      return;
+    }
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch (error) {
-      console.warn("Idle Village: failed to save state", error);
+      if (typeof console !== "undefined" && typeof console.warn === "function") {
+        console.warn("Idle Village: failed to save state", error);
+      }
     }
   }
 
@@ -536,14 +496,14 @@
       if (!valueSpan) return;
       switch (resourceKey) {
         case "happiness":
-          valueSpan.textContent = `${state.resources.happiness}%`;
+          valueSpan.textContent = `${formatAmount(state.resources.happiness)}%`;
           break;
         case "population":
           valueSpan.textContent = `${assigned}/${state.population.total}`;
           break;
         default:
           if (state.resources[resourceKey] !== undefined) {
-            valueSpan.textContent = state.resources[resourceKey];
+            valueSpan.textContent = formatAmount(state.resources[resourceKey]);
           }
           break;
       }
@@ -1883,11 +1843,12 @@
   }
 
   function updateResourcesFromPayload(payload) {
-    if (!payload || typeof payload.resources !== "object" || payload.resources === null) {
+    if (!payload || typeof payload !== "object" || payload === null) {
       return false;
     }
     let changed = false;
-    Object.entries(payload.resources).forEach(([key, value]) => {
+
+    const applyResource = (key, value) => {
       if (typeof key !== "string") {
         return;
       }
@@ -1900,7 +1861,25 @@
         state.resources[normalizedKey] = numeric;
         changed = true;
       }
-    });
+    };
+
+    if (payload.resources && typeof payload.resources === "object") {
+      Object.entries(payload.resources).forEach(([key, value]) => {
+        applyResource(key, value);
+      });
+    }
+
+    if (payload.inventory && typeof payload.inventory === "object") {
+      Object.entries(payload.inventory).forEach(([key, value]) => {
+        if (!value || typeof value !== "object") {
+          return;
+        }
+        if ("amount" in value) {
+          applyResource(key, value.amount);
+        }
+      });
+    }
+
     return changed;
   }
 
@@ -1977,10 +1956,21 @@
   }
 
   async function initialiseSeasonSync() {
+    if (shouldForceReset) {
+      const initPayload = await fetchJson("/api/init?reset=1", { method: "POST" });
+      if (initPayload) {
+        if (initPayload.season) {
+          updateSeasonState(initPayload.season);
+        }
+        updateBuildingsFromPayload(initPayload);
+      }
+    }
+
     const loaded = await loadSeasonFromStateEndpoint();
     if (loaded) {
       return;
     }
+
     const initPayload = await fetchJson("/api/init", { method: "POST" });
     if (initPayload) {
       if (initPayload.season) {
