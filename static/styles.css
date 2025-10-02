@@ -231,9 +231,20 @@ body {
     color 0.2s ease, opacity 0.2s ease;
 }
 
-.status-chip__action:disabled {
+.status-chip__action:disabled,
+.status-chip__action[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.action-row button:disabled,
+.action-row button[aria-disabled="true"],
+.job-card button:disabled,
+.job-card button[aria-disabled="true"],
+.worker-controls button:disabled,
+.worker-controls button[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .status-chip--warning .status-chip__action:not(:disabled) {
