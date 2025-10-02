@@ -68,9 +68,9 @@ class Building:
             base = min(1.0, max(0.0, workers / self.max_workers))
 
         if isinstance(modifiers, Mapping):
-            season_mod = float(modifiers.get("global", 1.0))
-            building_mod = float(modifiers.get(self.type_key, 1.0))
-            modifier_value = season_mod * building_mod
+            modifier_value = 1.0
+            for value in modifiers.values():
+                modifier_value *= float(value)
         elif modifiers is None:
             modifier_value = 1.0
         else:

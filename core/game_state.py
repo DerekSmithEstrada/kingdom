@@ -21,7 +21,7 @@ class GameState:
 
     def __init__(self) -> None:
         self.notifications: Deque[str] = deque(maxlen=config.NOTIFICATION_QUEUE_LIMIT)
-        self.season_clock = SeasonClock()
+        self.season_clock = SeasonClock(season_modifiers=config.SEASON_MODIFIERS)
         self._sync_season_state()
         self.inventory = Inventory()
         self.inventory.set_notifier(self.add_notification)
@@ -40,7 +40,7 @@ class GameState:
 
     def reset(self) -> None:
         self.notifications.clear()
-        self.season_clock = SeasonClock()
+        self.season_clock = SeasonClock(season_modifiers=config.SEASON_MODIFIERS)
         self._sync_season_state()
         self.inventory = Inventory()
         self.inventory.set_notifier(self.add_notification)
@@ -85,11 +85,7 @@ class GameState:
             self.last_production_reports[building.id] = report
 
     def get_production_modifiers(self, building: Building) -> Dict[str, float]:
-        season_mod = config.SEASON_MODIFIERS.get(self.season, {})
-        return {
-            "global": float(season_mod.get("global", 1.0)),
-            building.type_key: float(season_mod.get(building.type_key, 1.0)),
-        }
+        return self.season_clock.get_modifiers(building.type_key)
 
     # ------------------------------------------------------------------
     def build_building(self, type_key: str) -> Building:
@@ -228,6 +224,8 @@ class GameState:
         snapshot = building.to_snapshot()
         modifiers = self.get_production_modifiers(building)
         effective_rate = building.effective_rate(building.assigned_workers, modifiers)
+        modifier_payload = self.season_clock.modifiers_payload(building.type_key)
+        modifier_payload["total_multiplier"] = float(modifier_payload["total_multiplier"])
         can_produce, reason = self._building_can_produce(building, effective_rate)
         pending_eta = self._building_pending_eta(building, effective_rate)
         last_report = self._building_last_report(building)
@@ -240,6 +238,7 @@ class GameState:
                 "pending_eta": pending_eta,
                 "last_report": last_report,
                 "production_report": last_report,
+                "modifiers_applied": modifier_payload,
             }
         )
         return snapshot

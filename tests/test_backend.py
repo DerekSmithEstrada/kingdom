@@ -24,6 +24,7 @@ def run_all_tests() -> None:
     test_hud_snapshot_contains_season()
     test_tick_updates_progress()
     test_season_color_alignment()
+    test_seasonal_modifiers_affect_production()
     test_persistence_cycle()
     test_persistence_preserves_clock()
     test_atomic_cycle_requires_inputs()
@@ -170,6 +171,42 @@ def test_season_color_alignment() -> None:
             season = ui_bridge.tick(180.0)["season"]
         assert season["season_name"] == expected_name
         assert season["color_hex"] == SeasonClock.SEASON_COLORS[expected_name]
+
+
+def test_seasonal_modifiers_affect_production() -> None:
+    ui_bridge.init_game()
+    state = get_game_state()
+    build_result = ui_bridge.build_building(config.FARMER)
+    building_id = build_result["building"]["id"]
+    ui_bridge.assign_workers(building_id, 3)
+    state.inventory.set_amount(Resource.SEEDS, 500)
+
+    def advance_to(target: str) -> None:
+        attempts = 0
+        while state.season != target and attempts < 8:
+            remaining = state.season_clock.get_time_left()
+            dt = remaining if remaining > 0 else state.season_clock.ticks_per_season
+            ui_bridge.tick(dt + 0.001)
+            attempts += 1
+        assert state.season == target, f"Failed to reach season {target}"
+
+    advance_to("Summer")
+    summer_snapshot = state.snapshot_building(building_id)
+    summer_modifiers = summer_snapshot["modifiers_applied"]
+    assert summer_modifiers["season"] == "Summer"
+    assert math.isclose(
+        summer_modifiers["values"][config.FARMER], 1.2, rel_tol=1e-6
+    )
+
+    advance_to("Winter")
+    winter_snapshot = state.snapshot_building(building_id)
+    winter_modifiers = winter_snapshot["modifiers_applied"]
+    assert winter_modifiers["season"] == "Winter"
+    assert math.isclose(
+        winter_modifiers["values"][config.FARMER], 0.7, rel_tol=1e-6
+    )
+
+    assert winter_snapshot["effective_rate"] < summer_snapshot["effective_rate"]
 
 
 def test_persistence_cycle() -> None:

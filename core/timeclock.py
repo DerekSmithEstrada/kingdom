@@ -1,7 +1,7 @@
 """Season and time tracking for the game."""
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Mapping
 
 
 class SeasonClock:
@@ -19,11 +19,16 @@ class SeasonClock:
         self,
         seasons: List[str] | None = None,
         season_duration: float = 180.0,
+        season_modifiers: Mapping[str, Mapping[str, float]] | None = None,
     ) -> None:
         self.seasons = list(seasons or self.SEASON_NAMES)
         self.ticks_per_season = float(season_duration)
         self.current_index = 0
         self.tick_within_season = 0.0
+        self._season_modifiers: Dict[str, Dict[str, float]] = {
+            season: {str(key): float(value) for key, value in modifiers.items()}
+            for season, modifiers in (season_modifiers or {}).items()
+        }
 
     # ------------------------------------------------------------------
     def update(self, dt: float) -> None:
@@ -58,6 +63,44 @@ class SeasonClock:
             "season_index": self.current_index,
             "progress": self.get_progress(),
             "color_hex": self.get_color(),
+        }
+
+    # ------------------------------------------------------------------
+    def get_modifiers(self, building_tag: str | None = None) -> Dict[str, float]:
+        """Return the active modifier mapping for ``building_tag`` in this season."""
+
+        season_name = self.get_current_season()
+        season_modifiers = self._season_modifiers.get(season_name, {})
+        modifiers: Dict[str, float] = {
+            "global": float(season_modifiers.get("global", 1.0))
+        }
+        if building_tag:
+            modifiers[building_tag] = float(season_modifiers.get(building_tag, 1.0))
+        return modifiers
+
+    def modifiers_payload(self, building_tag: str | None = None) -> Dict[str, object]:
+        """Return UI-friendly data describing the modifiers applied."""
+
+        values = self.get_modifiers(building_tag)
+        total = 1.0
+        breakdown = []
+        payload_values: Dict[str, float] = {}
+        for source, multiplier in values.items():
+            factor = float(multiplier)
+            payload_values[source] = factor
+            breakdown.append(
+                {
+                    "source": source,
+                    "multiplier": factor,
+                    "percent": (factor - 1.0) * 100.0,
+                }
+            )
+            total *= factor
+        return {
+            "season": self.get_current_season(),
+            "values": payload_values,
+            "breakdown": breakdown,
+            "total_multiplier": total,
         }
 
     def export_state(self) -> Dict[str, float | int]:
