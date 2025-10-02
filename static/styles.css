@@ -152,6 +152,7 @@ body {
 }
 
 .building-card {
+  position: relative;
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 1rem;
@@ -160,6 +161,27 @@ body {
   background: rgb(15 23 42 / 0.6);
   padding: 1rem;
   box-shadow: 0 15px 35px -25px rgb(8 15 30 / 0.8);
+}
+
+.building-card[data-stalled="true"] {
+  border-color: rgb(71 85 105 / 0.6);
+  background: rgb(15 23 42 / 0.45);
+  box-shadow: 0 12px 30px -28px rgb(8 15 30 / 0.7);
+}
+
+.status-chip {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  border-radius: 9999px;
+  border: 1px solid rgb(248 113 113 / 0.35);
+  background: rgb(248 113 113 / 0.18);
+  padding: 0.15rem 0.6rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgb(254 226 226 / 0.9);
 }
 
 .building-meta {
@@ -214,14 +236,53 @@ body {
 .action-row input[type="number"],
 .job-card input[type="number"],
 .trade-row input[type="number"] {
-  width: 4.5rem;
+  width: 3.5rem;
   border-radius: 0.5rem;
   border: 1px solid rgb(51 65 85 / 0.8);
   background: rgb(15 23 42 / 0.8);
   padding: 0.25rem 0.5rem;
   font-size: 0.75rem;
-  text-align: right;
+  text-align: center;
   color: rgb(226 232 240);
+}
+
+.worker-group {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  color: rgb(203 213 225);
+}
+
+.worker-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: rgb(148 163 184);
+}
+
+.worker-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.worker-controls button {
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.action-row button:disabled,
+.job-card button:disabled,
+.worker-controls button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .job-card {

@@ -23,6 +23,8 @@
         active: 1,
         capacityPerBuilding: 2,
         icon: "🪓",
+        can_produce: true,
+        reason: null,
       },
       {
         id: "lumber-hut",
@@ -32,6 +34,8 @@
         active: 4,
         capacityPerBuilding: 2,
         icon: "🏚️",
+        can_produce: true,
+        reason: null,
       },
       {
         id: "stone-quarry",
@@ -41,6 +45,8 @@
         active: 3,
         capacityPerBuilding: 3,
         icon: "⛏️",
+        can_produce: true,
+        reason: null,
       },
       {
         id: "wheat-farm",
@@ -50,6 +56,8 @@
         active: 0,
         capacityPerBuilding: 2,
         icon: "🌾",
+        can_produce: true,
+        reason: null,
       },
     ],
     jobs: [
@@ -135,6 +143,22 @@
     return building.built * building.capacityPerBuilding;
   }
 
+  function formatResourceName(raw) {
+    if (raw == null) return "";
+    const value = typeof raw === "string" ? raw : String(raw);
+    return value
+      .replace(/_/g, " ")
+      .split(" ")
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  }
+
+  function escapeAttribute(value) {
+    if (value == null) return "";
+    return String(value).replace(/"/g, "&quot;");
+  }
+
   function getTotalAssigned() {
     const buildingWorkers = state.buildings.reduce((total, building) => total + Number(building.active || 0), 0);
     const jobWorkers = state.jobs.reduce((total, job) => total + Number(job.assigned || 0), 0);
@@ -207,9 +231,67 @@
       const container = buildingContainers[building.category];
       if (!container) return;
       const capacity = getCapacity(building);
+      const canProduce = building.can_produce !== false;
+      const reason = building.reason || (building.last_report && building.last_report.reason) || null;
+      const detail =
+        (building.last_report && building.last_report.detail) ||
+        (building.production_report && building.production_report.detail) ||
+        null;
+      const isStalled = canProduce === false;
+      const shouldDisableIncrease = reason === "missing_input" || reason === "no_capacity";
+      const disableTooltip = shouldDisableIncrease
+        ? reason === "missing_input"
+          ? `No hay suficientes recursos para operar ${building.name}.`
+          : "No hay espacio disponible para almacenar la producción."
+        : "";
+
+      let statusChipText = "";
+      if (isStalled) {
+        switch (reason) {
+          case "missing_input":
+          case "missing_maintenance": {
+            const resourceName = formatResourceName(detail) || "Recursos";
+            statusChipText = `Falta: ${resourceName}`;
+            break;
+          }
+          case "no_capacity":
+            statusChipText = "Sin espacio";
+            break;
+          case "no_workers":
+            statusChipText = "Sin trabajadores";
+            break;
+          case "inactive":
+            statusChipText = "Inactivo";
+            break;
+          default:
+            statusChipText = "Inactivo";
+            break;
+        }
+      }
+
+      const assignAttrs = [];
+      const incrementAttrs = [];
+      if (shouldDisableIncrease) {
+        assignAttrs.push("disabled", "aria-disabled=\"true\"");
+        incrementAttrs.push("disabled", "aria-disabled=\"true\"");
+        if (disableTooltip) {
+          const escaped = escapeAttribute(disableTooltip);
+          assignAttrs.push(`title=\"${escaped}\"`);
+          incrementAttrs.push(`title=\"${escaped}\"`);
+        }
+      }
+
+      const assignAttrString = assignAttrs.length ? ` ${assignAttrs.join(" ")}` : "";
+      const incrementAttrString = incrementAttrs.length ? ` ${incrementAttrs.join(" ")}` : "";
+      const stalledAttribute = isStalled ? ' data-stalled="true"' : "";
+      const statusChipMarkup = statusChipText
+        ? `<span class="status-chip" data-reason="${reason || ""}">${statusChipText}</span>`
+        : "";
+
       const article = document.createElement("li");
       article.innerHTML = `
-        <article class="building-card" data-building-id="${building.id}">
+        <article class="building-card" data-building-id="${building.id}"${stalledAttribute}>
+          ${statusChipMarkup}
           <span class="icon-badge" role="img" aria-label="${building.name} icon">${building.icon}</span>
           <div class="building-meta">
             <div class="flex items-start justify-between gap-2">
@@ -225,11 +307,15 @@
             <div class="action-row">
               <button type="button" data-action="build" data-building-id="${building.id}">Build</button>
               <button type="button" data-action="demolish" data-building-id="${building.id}">Demolish</button>
-              <label class="flex items-center gap-2 text-xs text-slate-300">
-                <span>Workers</span>
-                <input type="number" min="0" step="1" value="${building.active}" data-building-input="${building.id}" />
-              </label>
-              <button type="button" data-action="assign" data-building-id="${building.id}">Assign</button>
+              <div class="worker-group">
+                <span class="worker-label">Workers</span>
+                <div class="worker-controls">
+                  <button type="button" data-action="worker-decrement" data-building-id="${building.id}" aria-label="Quitar trabajador">-</button>
+                  <input type="number" min="0" step="1" value="${building.active}" data-building-input="${building.id}" />
+                  <button type="button" data-action="worker-increment" data-building-id="${building.id}" aria-label="Agregar trabajador"${incrementAttrString}>+</button>
+                </div>
+              </div>
+              <button type="button" data-action="assign" data-building-id="${building.id}"${assignAttrString}>Assign</button>
             </div>
           </div>
         </article>
@@ -315,6 +401,18 @@
     updateJobsCount();
   }
 
+  function updateBuildingInputValue(buildingId, delta) {
+    const building = state.buildings.find((entry) => entry.id === buildingId);
+    if (!building) return;
+    const input = document.querySelector(`[data-building-input="${buildingId}"]`);
+    if (!input) return;
+    const capacity = getCapacity(building);
+    const current = Number(input.value);
+    const sanitized = Number.isFinite(current) ? current : 0;
+    const nextValue = Math.max(0, Math.min(capacity, sanitized + delta));
+    input.value = nextValue;
+  }
+
   function assignBuildingWorkers(buildingId, requested) {
     const building = state.buildings.find((entry) => entry.id === buildingId);
     if (!building) return;
@@ -376,6 +474,10 @@
       adjustBuildingCount(buildingId, 1);
     } else if (action === "demolish") {
       adjustBuildingCount(buildingId, -1);
+    } else if (action === "worker-increment") {
+      updateBuildingInputValue(buildingId, 1);
+    } else if (action === "worker-decrement") {
+      updateBuildingInputValue(buildingId, -1);
     } else if (action === "assign") {
       const input = document.querySelector(`[data-building-input="${buildingId}"]`);
       const desired = input ? Number(input.value) : 0;
