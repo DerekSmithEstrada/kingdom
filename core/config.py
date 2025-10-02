@@ -144,10 +144,27 @@ STARTING_RESOURCES: Dict[Resource, float] = {
 }
 
 SEASON_MODIFIERS: Dict[str, Dict[str, float]] = {
-    "Spring": {"global": 1.0, FARMER: 1.05},
-    "Summer": {"global": 1.0, FARMER: 1.1},
-    "Autumn": {"global": 1.0, ARTISAN: 1.05},
-    "Winter": {"global": 0.95, MINER: 0.9},
+    "Spring": {
+        "global": 1.0,
+        FARMER: 1.1,
+    },
+    "Summer": {
+        "global": 1.0,
+        FARMER: 1.2,
+        MINER: 0.9,
+    },
+    "Autumn": {
+        "global": 1.0,
+        ARTISAN: 1.15,
+        MINER: 1.05,
+    },
+    "Winter": {
+        "global": 1.0,
+        FARMER: 0.7,
+        WOODCUTTER_CAMP: 1.1,
+        LUMBER_HUT: 1.1,
+        MINER: 1.05,
+    },
 }
 
 NOTIFICATION_QUEUE_LIMIT = 50
