@@ -174,6 +174,12 @@
     return { element: item, icon, amount };
   }
 
+  function syncAriaDisabled(control, disabled) {
+    const isDisabled = Boolean(disabled);
+    control.disabled = isDisabled;
+    control.setAttribute("aria-disabled", isDisabled ? "true" : "false");
+  }
+
   function getResourceStock(resource) {
     if (!resource) return 0;
     const key = resource.toLowerCase();
@@ -676,7 +682,12 @@
       }
       listElement.appendChild(item.element);
       seen.add(key);
-      updater(item, key, Number(amount));
+      const ariaLabel = updater(item, key, Number(amount));
+      if (typeof ariaLabel === "string" && ariaLabel.trim()) {
+        item.element.setAttribute("aria-label", ariaLabel);
+      } else {
+        item.element.removeAttribute("aria-label");
+      }
     });
 
     itemsMap.forEach((item, key) => {
@@ -702,12 +713,14 @@
           : "—";
         item.icon.textContent = resourceIconMap[resource] || "📦";
         item.amount.textContent = formatAmount(perCycle);
-        item.element.title = `Necesita ${formatAmount(
+        const labelText = `Necesita ${formatAmount(
           perCycle
         )}/ciclo. Stock actual: ${formatAmount(
           stock
         )}. ETA para siguiente ciclo: ${etaText}`;
+        item.element.title = labelText;
         item.element.classList.toggle("io-item-warning", stock + 1e-9 < perCycle);
+        return `${formatResourceKey(resource)} — ${labelText}`;
       }
     );
 
@@ -727,12 +740,14 @@
         const perMinute = perCycle * cyclesPerMinute;
         item.icon.textContent = resourceIconMap[resource] || "📦";
         item.amount.textContent = formatAmount(perCycle);
-        item.element.title = `${formatResourceKey(
+        const labelText = `${formatResourceKey(
           resource
         )}: ${formatAmount(perCycle)} por ciclo • ${formatAmount(
           perMinute
         )} por minuto`;
+        item.element.title = labelText;
         item.element.classList.remove("io-item-warning");
+        return labelText;
       }
     );
   }
@@ -801,11 +816,12 @@
       importButton.className = "status-chip__action";
       importButton.dataset.action = "trigger-import";
       importButton.dataset.buildingId = building.id;
+      syncAriaDisabled(importButton, false);
       if (missingResource) {
         importButton.dataset.resource = missingResource;
         importButton.title = "Abrir comercio para importar este recurso.";
       } else {
-        importButton.disabled = true;
+        syncAriaDisabled(importButton, true);
         importButton.title = "No se puede determinar el recurso faltante.";
       }
       importButton.textContent = "Importar";
@@ -826,11 +842,11 @@
     entry.incrementButton.dataset.buildingId = building.id;
     entry.assignButton.dataset.buildingId = building.id;
 
-    entry.decrementButton.disabled = activeWorkers <= 0;
+    syncAriaDisabled(entry.decrementButton, activeWorkers <= 0);
 
     const disableState = getWorkerDisableState(building);
-    entry.assignButton.disabled = disableState.disabled;
-    entry.incrementButton.disabled = disableState.disabled;
+    syncAriaDisabled(entry.assignButton, disableState.disabled);
+    syncAriaDisabled(entry.incrementButton, disableState.disabled);
     if (disableState.disabled) {
       entry.assignButton.title = disableState.tooltip;
       entry.incrementButton.title = disableState.tooltip;
