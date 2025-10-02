@@ -21,6 +21,45 @@ body {
   box-shadow: 0 10px 30px -15px rgb(15 23 42 / 0.7);
 }
 
+.warning-chips:empty {
+  display: none;
+}
+
+.chip--warning {
+  border-color: rgb(248 113 113 / 0.3);
+  background: rgb(248 113 113 / 0.12);
+  color: rgb(254 226 226);
+}
+
+.chip--warning .chip-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.chip--warning .chip-button {
+  align-self: flex-start;
+  border-radius: 9999px;
+  border: 1px solid rgb(248 113 113 / 0.4);
+  background: rgb(248 113 113 / 0.15);
+  padding: 0.25rem 0.6rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgb(254 226 226);
+  transition: background 0.2s ease;
+}
+
+.chip--warning .chip-button:hover {
+  background: rgb(248 113 113 / 0.25);
+}
+
+.chip--warning.chip--resolved {
+  opacity: 0.8;
+  filter: saturate(0.7);
+}
+
 @media (min-width: 640px) {
   .chip {
     flex-direction: row;
@@ -184,6 +223,72 @@ body {
   background: linear-gradient(90deg, rgba(94, 234, 212, 0.7), rgba(129, 140, 248, 0.7));
 }
 
+.io-section {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.io-section-title {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgb(148 163 184);
+  font-weight: 700;
+}
+
+.io-pill-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.io-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 9999px;
+  border: 1px solid rgb(71 85 105 / 0.6);
+  background: rgb(30 41 59 / 0.7);
+  padding: 0.4rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgb(226 232 240);
+}
+
+.io-pill .tooltip {
+  left: 50%;
+  right: auto;
+  top: calc(100% + 0.5rem);
+  transform: translateX(-50%);
+  width: max(12rem, 11rem);
+}
+
+.io-pill .tooltip-arrow {
+  right: auto;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.io-tooltip-content {
+  text-align: center;
+  color: rgb(226 232 240);
+}
+
+.io-pill--warning {
+  border-color: rgb(248 113 113 / 0.5);
+  background: rgb(248 113 113 / 0.12);
+}
+
+.io-pill--warning .io-tooltip-content {
+  color: rgb(252 165 165);
+}
+
+.io-pill--warning .io-pill-label {
+  color: rgb(254 226 226);
+}
+
 .action-row {
   display: flex;
   flex-wrap: wrap;
@@ -331,6 +436,19 @@ body {
     flex-direction: row;
     align-items: center;
   }
+}
+
+.trade-range-value {
+  min-width: 2.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: rgb(226 232 240);
+}
+
+.trade-row--highlight {
+  border-color: rgb(94 234 212 / 0.6);
+  box-shadow: 0 0 0 2px rgb(94 234 212 / 0.25);
 }
 
 .trade-row button {

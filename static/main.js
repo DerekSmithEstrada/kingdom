@@ -14,6 +14,7 @@
     population: {
       total: 20,
     },
+    warnings: [],
     buildings: [
       {
         id: "woodcutter-camp",
@@ -23,6 +24,11 @@
         active: 1,
         capacityPerBuilding: 2,
         icon: "🪓",
+        pending_eta: 18,
+        consumes: [
+          { resource: "tools", amount: 0.5 },
+          { resource: "wheat", amount: 1 },
+        ],
       },
       {
         id: "lumber-hut",
@@ -32,6 +38,11 @@
         active: 4,
         capacityPerBuilding: 2,
         icon: "🏚️",
+        pending_eta: 24,
+        consumes: [
+          { resource: "wood", amount: 3 },
+          { resource: "tools", amount: 0.25 },
+        ],
       },
       {
         id: "stone-quarry",
@@ -41,6 +52,10 @@
         active: 3,
         capacityPerBuilding: 3,
         icon: "⛏️",
+        pending_eta: 32,
+        consumes: [
+          { resource: "tools", amount: 0.75 },
+        ],
       },
       {
         id: "wheat-farm",
@@ -50,6 +65,10 @@
         active: 0,
         capacityPerBuilding: 2,
         icon: "🌾",
+        pending_eta: 12,
+        consumes: [
+          { resource: "tools", amount: 0.3 },
+        ],
       },
     ],
     jobs: [
@@ -70,6 +89,18 @@
       progress: 0,
       color_hex: "#38BDF8",
     },
+  };
+
+  const RESOURCE_METADATA = {
+    happiness: { label: "Happiness", icon: "😊" },
+    population: { label: "Population", icon: "👤" },
+    gold: { label: "Gold", icon: "🪙" },
+    wood: { label: "Wood", icon: "🪵" },
+    planks: { label: "Planks", icon: "🧱" },
+    stone: { label: "Stone", icon: "🪨" },
+    tools: { label: "Tools", icon: "🛠️" },
+    wheat: { label: "Wheat", icon: "🌾" },
+    hops: { label: "Hops", icon: "🍺" },
   };
 
   function clone(value) {
@@ -95,6 +126,7 @@
         trade: Array.isArray(parsed.trade) && parsed.trade.length
           ? parsed.trade
           : clone(defaultState.trade),
+        warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
         season: parsed.season
           ? { ...defaultState.season, ...parsed.season }
           : clone(defaultState.season),
@@ -127,9 +159,208 @@
 
   const jobsList = document.getElementById("jobs-list");
   const tradeList = document.getElementById("trade-list");
+  const tradePanel = document.getElementById("trade");
   const jobsCountLabel = document.getElementById("jobs-count");
   const seasonLabel = document.getElementById("season-label");
   const seasonFill = document.getElementById("season-fill");
+  const warningsContainer = document.getElementById("warning-chips");
+
+  function getResourceMeta(resourceKey) {
+    if (!resourceKey) {
+      return { label: "", icon: "" };
+    }
+    const meta = RESOURCE_METADATA[resourceKey];
+    if (meta) {
+      return meta;
+    }
+    const label = resourceKey.replace(/[-_]/g, " ").replace(/\b\w/g, (match) => match.toUpperCase());
+    return { label, icon: "" };
+  }
+
+  function formatAmount(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return "0";
+    }
+    const rounded = Math.round(numeric);
+    if (Math.abs(numeric - rounded) < 1e-3) {
+      return String(rounded);
+    }
+    return numeric.toFixed(1);
+  }
+
+  function buildConsumesMarkup(building) {
+    if (!building || !Array.isArray(building.consumes) || building.consumes.length === 0) {
+      return "";
+    }
+    const pendingEta = Number(building.pending_eta);
+    const etaAttribute = Number.isFinite(pendingEta) ? ` data-io-eta="${pendingEta}"` : "";
+    const pills = building.consumes
+      .filter((entry) => entry && entry.resource)
+      .map((entry) => {
+        const meta = getResourceMeta(entry.resource);
+        const amount = Number(entry.amount) || 0;
+        const label = entry.label || meta.label || entry.resource;
+        const icon = entry.icon || meta.icon || "";
+        const iconText = icon ? `${icon} ` : "";
+        return `
+          <div class="io-pill group" data-io-resource="${entry.resource}" data-io-amount="${amount}"${etaAttribute}>
+            <span class="io-pill-label">${iconText}${label}</span>
+            <div class="tooltip io-tooltip">
+              <div class="tooltip-arrow"></div>
+              <div class="tooltip-content io-tooltip-content"></div>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+
+    if (!pills) {
+      return "";
+    }
+
+    return `
+      <div class="io-section" data-building-io="${building.id}">
+        <h4 class="io-section-title">Consumes</h4>
+        <div class="io-pill-list">
+          ${pills}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderWarnings() {
+    if (!warningsContainer) return;
+    warningsContainer.innerHTML = "";
+    const warnings = Array.isArray(state.warnings) ? state.warnings : [];
+    if (!warnings.length) {
+      warningsContainer.classList.add("hidden");
+      return;
+    }
+    warningsContainer.classList.remove("hidden");
+    warnings.forEach((warning) => {
+      const chip = document.createElement("div");
+      chip.className = "chip chip--warning";
+      const resourceKey = warning.resource || warning.resource_key || warning.key || "";
+      if (resourceKey) {
+        chip.dataset.warningResource = resourceKey;
+      }
+      const meta = getResourceMeta(resourceKey);
+      const message = warning.message || warning.text || `Falta: ${meta.label || resourceKey}`;
+
+      const messageWrapper = document.createElement("div");
+      messageWrapper.className = "flex flex-col gap-1";
+      const messageSpan = document.createElement("span");
+      const prefix = warning.icon || meta.icon || "⚠️";
+      messageSpan.textContent = `${prefix} ${message}`;
+      messageWrapper.appendChild(messageSpan);
+      chip.appendChild(messageWrapper);
+
+      const actions = document.createElement("div");
+      actions.className = "chip-actions";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "chip-button";
+      button.dataset.action = "auto-import";
+      if (resourceKey) {
+        button.dataset.resource = resourceKey;
+      }
+      button.textContent = "Importar";
+      actions.appendChild(button);
+      chip.appendChild(actions);
+
+      warningsContainer.appendChild(chip);
+    });
+  }
+
+  function refreshIoTooltips() {
+    const inventory = state.resources || {};
+    const pillNodes = document.querySelectorAll(".io-pill");
+    pillNodes.forEach((pill) => {
+      const resourceKey = pill.dataset.ioResource;
+      if (!resourceKey) return;
+      const required = Number(pill.dataset.ioAmount) || 0;
+      const eta = Number(pill.dataset.ioEta);
+      const tooltipContent = pill.querySelector(".io-tooltip-content");
+      const stock = Number(inventory[resourceKey]) || 0;
+      const etaText = Number.isFinite(eta) ? `${eta.toFixed(1)}s` : "—";
+      if (tooltipContent) {
+        tooltipContent.textContent = `Necesita ${formatAmount(required)}/ciclo. Stock actual: ${formatAmount(stock)}. ETA para siguiente ciclo: ${etaText}`;
+      }
+      if (stock + 1e-9 < required) {
+        pill.classList.add("io-pill--warning");
+      } else {
+        pill.classList.remove("io-pill--warning");
+      }
+    });
+    if (warningsContainer) {
+      const chips = warningsContainer.querySelectorAll(".chip--warning");
+      chips.forEach((chip) => {
+        const resourceKey = chip.dataset.warningResource;
+        if (!resourceKey) return;
+        const relatedPill = document.querySelector(`.io-pill[data-io-resource="${resourceKey}"]`);
+        if (relatedPill && relatedPill.classList.contains("io-pill--warning")) {
+          chip.classList.remove("chip--resolved");
+        } else {
+          chip.classList.add("chip--resolved");
+        }
+      });
+    }
+  }
+
+  function focusTradeForResource(resourceKey) {
+    if (!resourceKey || !tradeList) return;
+    const tradeRow = tradeList.querySelector(`[data-trade-id="${resourceKey}"]`);
+    if (!tradeRow) return;
+    if (tradePanel && typeof tradePanel.scrollIntoView === "function") {
+      tradePanel.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (typeof tradeRow.scrollIntoView === "function") {
+      tradeRow.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    const slider = tradeRow.querySelector(`input[data-trade-import-slider="${resourceKey}"]`);
+    if (!slider) return;
+    const min = Number(slider.min || 0);
+    const max = Number(slider.max || 100);
+    const mid = Math.round(min + (max - min) * 0.5);
+    slider.value = String(mid);
+    const display = tradeRow.querySelector(`[data-trade-import-display="${resourceKey}"]`);
+    if (display) {
+      display.textContent = String(mid);
+    }
+    if (typeof slider.focus === "function") {
+      slider.focus();
+    }
+    tradeRow.classList.add("trade-row--highlight");
+    window.setTimeout(() => {
+      tradeRow.classList.remove("trade-row--highlight");
+    }, 1500);
+  }
+
+  function handleWarningActions(event) {
+    const button = event.target.closest('button[data-action="auto-import"]');
+    if (!button) return;
+    const { resource } = button.dataset;
+    focusTradeForResource(resource);
+  }
+
+  function updateTradeRangeDisplays() {
+    if (!tradeList) return;
+    const sliders = tradeList.querySelectorAll('input[data-trade-import-slider]');
+    sliders.forEach((slider) => {
+      const tradeId = slider.dataset.tradeImportSlider;
+      if (!tradeId) return;
+      const parent = slider.parentElement;
+      if (!parent) return;
+      const display = parent.querySelector(`[data-trade-import-display="${tradeId}"]`);
+      if (display) {
+        display.textContent = slider.value;
+      }
+    });
+  }
+
+  if (warningsContainer) {
+    warningsContainer.addEventListener("click", handleWarningActions);
+  }
 
   function getCapacity(building) {
     return building.built * building.capacityPerBuilding;
@@ -162,6 +393,7 @@
           break;
       }
     });
+    refreshIoTooltips();
   }
 
   function renderSeason(season) {
@@ -208,6 +440,7 @@
       if (!container) return;
       const capacity = getCapacity(building);
       const article = document.createElement("li");
+      const consumesMarkup = buildConsumesMarkup(building);
       article.innerHTML = `
         <article class="building-card" data-building-id="${building.id}">
           <span class="icon-badge" role="img" aria-label="${building.name} icon">${building.icon}</span>
@@ -231,11 +464,13 @@
               </label>
               <button type="button" data-action="assign" data-building-id="${building.id}">Assign</button>
             </div>
+            ${consumesMarkup}
           </div>
         </article>
       `;
       container.appendChild(article);
     });
+    refreshIoTooltips();
   }
 
   function renderJobs() {
@@ -283,7 +518,8 @@
           </label>
           <label class="flex items-center gap-2 text-xs text-slate-300">
             <span>Import</span>
-            <input type="number" min="0" step="1" value="${item.import}" data-trade-input="${item.id}" />
+            <input type="range" min="0" max="100" step="1" value="${item.import}" data-trade-import-slider="${item.id}" />
+            <span class="trade-range-value" data-trade-import-display="${item.id}">${item.import}</span>
           </label>
         </div>
         <div class="balance ${balance > 0 ? "positive" : balance < 0 ? "negative" : ""}">
@@ -292,6 +528,7 @@
       `;
       tradeList.appendChild(row);
     });
+    updateTradeRangeDisplays();
   }
 
   function updateJobsCount() {
@@ -438,9 +675,22 @@
       const tradeId = target.dataset.tradeSlider;
       adjustTrade(tradeId, { export: Number(target.value) });
     }
-    if (target.matches("input[data-trade-input]")) {
-      const tradeId = target.dataset.tradeInput;
+    if (target.matches("input[data-trade-import-slider]")) {
+      const tradeId = target.dataset.tradeImportSlider;
+      if (tradeId) {
+        const parent = target.parentElement;
+        if (parent) {
+          const display = parent.querySelector(`[data-trade-import-display="${tradeId}"]`);
+          if (display) {
+            display.textContent = target.value;
+          }
+        }
+      }
       adjustTrade(tradeId, { import: Number(target.value) });
+      const row = target.closest(".trade-row");
+      if (row) {
+        row.classList.remove("trade-row--highlight");
+      }
     }
   }
 
@@ -494,6 +744,7 @@
       if (payload && payload.season) {
         updateSeasonState(payload.season);
       }
+      refreshIoTooltips();
       ticking = false;
     };
     setInterval(performTick, 5000);
@@ -523,6 +774,7 @@
   renderBuildings();
   renderJobs();
   renderTrade();
+  renderWarnings();
   attachAccordion();
   updateJobsCount();
   updateChips();
