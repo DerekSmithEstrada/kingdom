@@ -54,6 +54,10 @@ class Building:
     def cycle_time_sec(self) -> float:
         return self.recipe.cycle_time
 
+    @property
+    def per_worker_output_rate(self) -> Optional[Mapping[Resource, float]]:
+        return self.recipe.per_worker_output_rate
+
     # ------------------------------------------------------------------
     def effective_rate(
         self,
@@ -67,15 +71,20 @@ class Building:
         else:
             base = min(1.0, max(0.0, workers / self.max_workers))
 
+        modifier_value = self._modifier_multiplier(modifiers)
+        return base * modifier_value
+
+    def _modifier_multiplier(
+        self, modifiers: Mapping[str, float] | float | None
+    ) -> float:
         if isinstance(modifiers, Mapping):
             modifier_value = 1.0
             for value in modifiers.values():
                 modifier_value *= float(value)
-        elif modifiers is None:
-            modifier_value = 1.0
-        else:
-            modifier_value = float(modifiers)
-        return base * modifier_value
+            return modifier_value
+        if modifiers is None:
+            return 1.0
+        return float(modifiers)
 
     def next_cycle_eta(self) -> Optional[float]:
         """Return the estimated time until the next cycle completes."""
@@ -103,6 +112,17 @@ class Building:
             report["reason"] = inactive_reason
             self._last_effective_rate = 0.0
             self.production_report = report
+            return report
+
+        if self.per_worker_output_rate:
+            report = self._tick_continuous(dt, inventory, modifiers)
+            self.production_report = {
+                "status": report.get("status"),
+                "reason": report.get("reason"),
+                "detail": report.get("detail"),
+                "consumed": dict(report.get("consumed", {})),
+                "produced": dict(report.get("produced", {})),
+            }
             return report
 
         rate = self.effective_rate(self.assigned_workers, modifiers)
@@ -179,6 +199,62 @@ class Building:
             "consumed": dict(report["consumed"]),
             "produced": dict(report["produced"]),
         }
+        return report
+
+    def _tick_continuous(
+        self,
+        dt: float,
+        inventory: Inventory,
+        modifiers: Mapping[str, float] | float | None,
+    ) -> Dict[str, object]:
+        report = self._new_report()
+        multiplier = self._modifier_multiplier(modifiers)
+        if multiplier <= 0:
+            self._apply_inactive_status("inactive")
+            report["status"] = "inactive"
+            report["reason"] = "inactive"
+            self._last_effective_rate = 0.0
+            self.cycle_progress = 0.0
+            return report
+
+        workers = max(0, self.assigned_workers)
+        produced_amounts: Dict[Resource, float] = {}
+        for resource, rate in (self.per_worker_output_rate or {}).items():
+            amount = workers * rate * multiplier * dt
+            if amount > 0:
+                produced_amounts[resource] = amount
+
+        self._last_effective_rate = multiplier
+        self.cycle_progress = 0.0
+
+        if not produced_amounts:
+            report["status"] = "inactive"
+            report["reason"] = "inactive"
+            return report
+
+        if not inventory.can_add(produced_amounts):
+            self.status = "capacidad_llena"
+            report["status"] = "stalled"
+            report["reason"] = "no_capacity"
+            report["consumed"] = {}
+            report["produced"] = {}
+            return report
+
+        residual = inventory.add(produced_amounts)
+        if residual:
+            self.status = "capacidad_llena"
+            report["status"] = "stalled"
+            report["reason"] = "no_capacity"
+            report["consumed"] = {}
+            report["produced"] = {}
+            return report
+
+        self.status = "ok"
+        self._maintenance_notified = False
+        report["status"] = "produced"
+        report["reason"] = None
+        report["consumed"] = {}
+        report["produced"] = self._resources_to_payload(produced_amounts)
         return report
 
     # ------------------------------------------------------------------
