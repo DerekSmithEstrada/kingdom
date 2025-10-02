@@ -66,6 +66,7 @@ def load_game(path: str) -> None:
     game_state.worker_pool.set_total_workers(int(workers_info.get("total", game_state.worker_pool.total_workers)))
 
     game_state.buildings = {}
+    game_state.worker_pool.bulk_load_assignments({})
     Building.reset_ids()
     max_id = 0
     for entry in data.get("buildings", []):
