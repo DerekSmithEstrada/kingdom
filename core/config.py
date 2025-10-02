@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Mapping, Optional
 
-from .resources import Resource, normalise_mapping
+from .resources import ALL_RESOURCES, Resource, normalise_mapping
 
 # Building identifiers used across the backend.
 WOODCUTTER_CAMP = "woodcutter_camp"
@@ -39,6 +39,7 @@ class BuildingRecipe:
     max_workers: int
     capacity: Optional[Mapping[Resource, float]] = None
     maintenance: Mapping[Resource, float] = field(default_factory=dict)
+    per_worker_output_rate: Optional[Mapping[Resource, float]] = None
 
 
 def _recipe(
@@ -49,6 +50,7 @@ def _recipe(
     max_workers: int,
     capacity: Mapping[Resource, float] | None = None,
     maintenance: Mapping[Resource, float] | None = None,
+    per_worker_output_rate: Mapping[Resource, float] | None = None,
 ) -> BuildingRecipe:
     return BuildingRecipe(
         inputs=normalise_mapping(inputs or {}),
@@ -57,17 +59,21 @@ def _recipe(
         max_workers=int(max_workers),
         capacity=None if capacity is None else normalise_mapping(capacity),
         maintenance=normalise_mapping(maintenance or {}),
+        per_worker_output_rate=None
+        if per_worker_output_rate is None
+        else normalise_mapping(per_worker_output_rate),
     )
 
 
 BUILDING_RECIPES: Dict[str, BuildingRecipe] = {
     WOODCUTTER_CAMP: _recipe(
-        # 0 input -> 1 Wood per 2s cycle with up to 3 workers.
+        # Extractive: 0.1 Wood per worker per second without inputs.
         inputs={},
-        outputs={Resource.WOOD: 1},
-        cycle_time=2.0,
-        max_workers=3,
-        maintenance={Resource.GOLD: 0.005},
+        outputs={Resource.WOOD: 0.1},
+        cycle_time=1.0,
+        max_workers=10,
+        maintenance={},
+        per_worker_output_rate={Resource.WOOD: 0.1},
     ),
     LUMBER_HUT: _recipe(
         # 2 Wood -> 1 Plank per 4s cycle; halved throughput if input missing.
@@ -131,17 +137,8 @@ CAPACIDADES: Dict[Resource, float] = {
 
 WORKERS_INICIALES: int = 20
 
-STARTING_RESOURCES: Dict[Resource, float] = {
-    Resource.WOOD: 60,
-    Resource.STONE: 35,
-    Resource.ORE: 5,
-    Resource.GRAIN: 25,
-    Resource.SEEDS: 15,
-    Resource.PLANK: 10,
-    Resource.WATER: 40,
-    Resource.GOLD: 100,
-    Resource.HOPS: 10,
-}
+STARTING_RESOURCES: Dict[Resource, float] = {resource: 0.0 for resource in ALL_RESOURCES}
+STARTING_RESOURCES[Resource.GOLD] = 10.0
 
 SEASON_MODIFIERS: Dict[str, Dict[str, float]] = {
     "Spring": {

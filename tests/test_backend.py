@@ -17,6 +17,7 @@ from core.timeclock import SeasonClock
 
 
 def run_all_tests() -> None:
+    test_initial_inventory_seed()
     test_building_construction()
     test_worker_assignments()
     test_production_cycle()
@@ -43,8 +44,27 @@ def assert_valid_season_block(season: dict) -> None:
     assert isinstance(season["color_hex"], str) and season["color_hex"].startswith("#")
 
 
+def grant_construction_resources(type_key: str, multiplier: float = 1.0) -> None:
+    state = get_game_state()
+    cost = config.COSTOS_CONSTRUCCION.get(type_key, {})
+    for resource, amount in cost.items():
+        state.inventory.set_amount(resource, float(amount) * multiplier)
+
+
+def test_initial_inventory_seed() -> None:
+    ui_bridge.init_game()
+    snapshot = ui_bridge.get_inventory_snapshot()
+    for resource in Resource:
+        amount = snapshot[resource.value]["amount"]
+        if resource is Resource.GOLD:
+            assert math.isclose(amount, 10.0, rel_tol=1e-9, abs_tol=1e-9)
+        else:
+            assert math.isclose(amount, 0.0, rel_tol=1e-9, abs_tol=1e-9)
+
+
 def test_building_construction() -> None:
     ui_bridge.init_game()
+    grant_construction_resources(config.WOODCUTTER_CAMP)
     result = ui_bridge.build_building(config.WOODCUTTER_CAMP)
     assert result["ok"], "Expected successful construction"
 
@@ -56,11 +76,12 @@ def test_building_construction() -> None:
 
 def test_worker_assignments() -> None:
     ui_bridge.init_game()
+    grant_construction_resources(config.WOODCUTTER_CAMP)
     build_result = ui_bridge.build_building(config.WOODCUTTER_CAMP)
     building_id = build_result["building"]["id"]
 
     assign_result = ui_bridge.assign_workers(building_id, 5)
-    assert assign_result["assigned"] == 3, "Should assign up to max workers"
+    assert assign_result["assigned"] == 5, "Should assign requested workers within max"
 
     unassign_result = ui_bridge.unassign_workers(building_id, 2)
     assert unassign_result["unassigned"] == 2
@@ -68,16 +89,18 @@ def test_worker_assignments() -> None:
 
 def test_production_cycle() -> None:
     ui_bridge.init_game()
+    grant_construction_resources(config.WOODCUTTER_CAMP)
     build_result = ui_bridge.build_building(config.WOODCUTTER_CAMP)
     building_id = build_result["building"]["id"]
-    ui_bridge.assign_workers(building_id, 3)
+    ui_bridge.assign_workers(building_id, 5)
 
     state = get_game_state()
+    state.inventory.set_amount(Resource.WOOD, 0.0)
     wood_before = state.inventory.get_amount(Resource.WOOD)
-    for _ in range(30):
-        ui_bridge.tick(0.1)
+    for _ in range(10):
+        ui_bridge.tick(1.0)
     wood_after = state.inventory.get_amount(Resource.WOOD)
-    assert wood_after > wood_before, "Wood production should increase stock"
+    assert math.isclose(wood_after - wood_before, 5.0, rel_tol=1e-9, abs_tol=1e-9)
 
 
 def test_trade_operations() -> None:
@@ -176,6 +199,7 @@ def test_season_color_alignment() -> None:
 
 def test_seasonal_modifiers_affect_production() -> None:
     ui_bridge.init_game()
+    grant_construction_resources(config.FARMER)
     state = get_game_state()
     build_result = ui_bridge.build_building(config.FARMER)
     building_id = build_result["building"]["id"]
@@ -212,6 +236,7 @@ def test_seasonal_modifiers_affect_production() -> None:
 
 def test_persistence_cycle() -> None:
     ui_bridge.init_game()
+    grant_construction_resources(config.FARMER)
     build_result = ui_bridge.build_building(config.FARMER)
     building_id = build_result["building"]["id"]
     ui_bridge.assign_workers(building_id, 2)
@@ -256,6 +281,7 @@ def test_persistence_preserves_clock() -> None:
 
 def test_atomic_cycle_requires_inputs() -> None:
     ui_bridge.init_game()
+    grant_construction_resources(config.LUMBER_HUT)
     build_result = ui_bridge.build_building(config.LUMBER_HUT)
     building_id = build_result["building"]["id"]
     state = get_game_state()
@@ -278,6 +304,7 @@ def test_atomic_cycle_requires_inputs() -> None:
 
 def test_atomic_cycle_respects_capacity() -> None:
     ui_bridge.init_game()
+    grant_construction_resources(config.WOODCUTTER_CAMP)
     build_result = ui_bridge.build_building(config.WOODCUTTER_CAMP)
     building_id = build_result["building"]["id"]
     state = get_game_state()
@@ -299,6 +326,7 @@ def test_atomic_cycle_respects_capacity() -> None:
 
 def test_atomic_cycle_reports_consumption() -> None:
     ui_bridge.init_game()
+    grant_construction_resources(config.LUMBER_HUT)
     build_result = ui_bridge.build_building(config.LUMBER_HUT)
     building_id = build_result["building"]["id"]
     state = get_game_state()
@@ -335,6 +363,7 @@ def test_atomic_cycle_reports_consumption() -> None:
 
 def test_insufficient_stock_blocks_output() -> None:
     ui_bridge.init_game()
+    grant_construction_resources(config.LUMBER_HUT)
     build_result = ui_bridge.build_building(config.LUMBER_HUT)
     building_id = build_result["building"]["id"]
     state = get_game_state()
@@ -358,6 +387,7 @@ def test_insufficient_stock_blocks_output() -> None:
 
 def test_exact_stock_produces_without_negatives() -> None:
     ui_bridge.init_game()
+    grant_construction_resources(config.LUMBER_HUT)
     build_result = ui_bridge.build_building(config.LUMBER_HUT)
     building_id = build_result["building"]["id"]
     state = get_game_state()
@@ -381,6 +411,7 @@ def test_exact_stock_produces_without_negatives() -> None:
 
 def test_competing_buildings_consume_available_input_once() -> None:
     ui_bridge.init_game()
+    grant_construction_resources(config.LUMBER_HUT, multiplier=2.0)
     first = ui_bridge.build_building(config.LUMBER_HUT)
     second = ui_bridge.build_building(config.LUMBER_HUT)
     first_id = first["building"]["id"]
@@ -409,6 +440,7 @@ def test_competing_buildings_consume_available_input_once() -> None:
 
 def test_season_change_modifies_rate_and_output() -> None:
     ui_bridge.init_game()
+    grant_construction_resources(config.FARMER)
     build_result = ui_bridge.build_building(config.FARMER)
     building_id = build_result["building"]["id"]
     state = get_game_state()
@@ -444,6 +476,7 @@ def test_season_change_modifies_rate_and_output() -> None:
 
 def test_artisan_requires_all_inputs() -> None:
     ui_bridge.init_game()
+    grant_construction_resources(config.ARTISAN)
     build_result = ui_bridge.build_building(config.ARTISAN)
     building_id = build_result["building"]["id"]
     state = get_game_state()
@@ -466,6 +499,7 @@ def test_artisan_requires_all_inputs() -> None:
 
 def test_missing_input_notifications_reflect_import_and_clear() -> None:
     ui_bridge.init_game()
+    grant_construction_resources(config.LUMBER_HUT)
     build_result = ui_bridge.build_building(config.LUMBER_HUT)
     building_id = build_result["building"]["id"]
     state = get_game_state()
