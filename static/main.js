@@ -155,61 +155,72 @@
       .replace(/\b\w/g, (character) => character.toUpperCase());
   }
 
-  function renderResourceList(resources, effectiveRate, cycleTime) {
-    const entries = Object.entries(resources || {}).filter(([, amount]) => {
-      const numeric = Number(amount);
-      return Number.isFinite(numeric) && numeric !== 0;
-    });
-    if (!entries.length) {
-      return '<span class="io-empty">—</span>';
-    }
+  function createIoItem(resource) {
+    const item = document.createElement("li");
+    item.className = "io-item";
+    item.dataset.resource = resource;
 
-    const cyclesPerMinute =
-      cycleTime > 0 ? Math.max(0, effectiveRate) * (60 / cycleTime) : 0;
-    const items = entries
-      .map(([resource, amount]) => {
-        const perCycle = Number(amount) || 0;
-        const perMinute = perCycle * cyclesPerMinute;
-        const tooltip = `${formatResourceKey(
-          resource
-        )}: ${formatAmount(perCycle)} por ciclo • ${formatAmount(
-          perMinute
-        )} por minuto`;
-        const icon = resourceIconMap[resource] || "📦";
-        return `
-          <li class="io-item" title="${tooltip}">
-            <span class="io-icon" role="img" aria-hidden="true">${icon}</span>
-            <span class="io-amount">${formatAmount(perCycle)}</span>
-          </li>
-        `.trim();
-      })
-      .join("");
-    return `<ul class="io-list">${items}</ul>`;
+    const icon = document.createElement("span");
+    icon.className = "io-icon";
+    icon.setAttribute("role", "img");
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = resourceIconMap[resource] || "📦";
+
+    const amount = document.createElement("span");
+    amount.className = "io-amount";
+
+    item.append(icon, amount);
+
+    return { element: item, icon, amount };
   }
 
-  function renderIoSection(building) {
-    const consumes = renderResourceList(
-      building.inputs,
-      building.effective_rate,
-      building.cycle_time
-    );
-    const produces = renderResourceList(
-      building.outputs,
-      building.effective_rate,
-      building.cycle_time
-    );
-    return `
-      <div class="io-section">
-        <div class="io-row">
-          <span class="io-label">Consumes</span>
-          <div class="io-values">${consumes}</div>
-        </div>
-        <div class="io-row">
-          <span class="io-label">Produces</span>
-          <div class="io-values">${produces}</div>
-        </div>
-      </div>
-    `.trim();
+  function getResourceStock(resource) {
+    if (!resource) return 0;
+    const key = resource.toLowerCase();
+    const value = state.resources[key];
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+  }
+
+  function resolveMissingResource(building) {
+    if (!building) return null;
+    const detail = building.last_report && building.last_report.detail;
+    if (typeof detail === "string" && detail) {
+      return detail.toLowerCase();
+    }
+    if (detail && typeof detail === "object" && typeof detail.value === "string") {
+      return detail.value.toLowerCase();
+    }
+    const entries = Object.entries(building.inputs || {});
+    for (const [resource, rawAmount] of entries) {
+      const amount = Number(rawAmount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        continue;
+      }
+      if (getResourceStock(resource) + 1e-9 < amount) {
+        return resource.toLowerCase();
+      }
+    }
+    return null;
+  }
+
+  function getWorkerDisableState(building) {
+    const reason = building && building.reason;
+    if (reason === "missing_input") {
+      const missing = resolveMissingResource(building);
+      const label = missing ? formatResourceKey(missing) : "insumos";
+      return {
+        disabled: true,
+        tooltip: `No puedes asignar más trabajadores: falta ${label}.`,
+      };
+    }
+    if (reason === "no_capacity") {
+      return {
+        disabled: true,
+        tooltip: "No hay capacidad disponible para producir más.",
+      };
+    }
+    return { disabled: false, tooltip: "" };
   }
 
   function logState() {
@@ -404,6 +415,8 @@
     crops: document.querySelector('[data-category="crops"]'),
   };
 
+  const buildingElementMap = new Map();
+
   const jobsList = document.getElementById("jobs-list");
   const tradeList = document.getElementById("trade-list");
   const jobsCountLabel = document.getElementById("jobs-count");
@@ -477,46 +490,464 @@
     saveState();
   }
 
-  function renderBuildings() {
-    state.buildings = state.buildings.map((building) => normaliseBuilding(building));
-    Object.values(buildingContainers).forEach((container) => {
-      if (container) container.innerHTML = "";
+  function createStat(labelText) {
+    const wrapper = document.createElement("span");
+    wrapper.innerHTML = `${labelText} <strong></strong>`;
+    const value = wrapper.querySelector("strong");
+    return { wrapper, value };
+  }
+
+  function createIoRow(labelText) {
+    const row = document.createElement("div");
+    row.className = "io-row";
+    const label = document.createElement("span");
+    label.className = "io-label";
+    label.textContent = labelText;
+    const values = document.createElement("div");
+    values.className = "io-values";
+    const list = document.createElement("ul");
+    list.className = "io-list";
+    const empty = document.createElement("span");
+    empty.className = "io-empty";
+    empty.textContent = "—";
+    values.append(list, empty);
+    row.append(label, values);
+    return { row, list, empty };
+  }
+
+  function createBuildingCard(building) {
+    const listItem = document.createElement("li");
+    listItem.className = "building-list-item";
+    listItem.dataset.buildingId = building.id;
+
+    const article = document.createElement("article");
+    article.className = "building-card";
+    article.dataset.buildingId = building.id;
+
+    const iconBadge = document.createElement("span");
+    iconBadge.className = "icon-badge";
+    iconBadge.setAttribute("role", "img");
+    iconBadge.setAttribute("aria-label", `${building.name} icon`);
+    iconBadge.textContent = building.icon;
+
+    const meta = document.createElement("div");
+    meta.className = "building-meta";
+
+    const headerRow = document.createElement("div");
+    headerRow.className = "flex items-start justify-between gap-2";
+    const nameHeading = document.createElement("h3");
+    nameHeading.className = "text-base font-semibold text-slate-100";
+    nameHeading.textContent = building.name;
+    const categoryLabel = document.createElement("span");
+    categoryLabel.className = "text-[0.65rem] uppercase tracking-[0.2em] text-slate-500";
+    categoryLabel.textContent = building.category;
+    headerRow.append(nameHeading, categoryLabel);
+
+    const statusContainer = document.createElement("div");
+    statusContainer.className = "building-status-row";
+    statusContainer.style.display = "none";
+
+    const statRow = document.createElement("div");
+    statRow.className = "stat-row";
+    const builtStat = createStat("Built");
+    const activeStat = createStat("Active");
+    const capacityStat = createStat("Capacity");
+    statRow.append(builtStat.wrapper, activeStat.wrapper, capacityStat.wrapper);
+
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    bar.setAttribute("aria-hidden", "true");
+
+    const ioSection = document.createElement("div");
+    ioSection.className = "io-section";
+    const consumes = createIoRow("Consumes");
+    const produces = createIoRow("Produces");
+    ioSection.append(consumes.row, produces.row);
+
+    const actionRow = document.createElement("div");
+    actionRow.className = "action-row";
+
+    const buildButton = document.createElement("button");
+    buildButton.type = "button";
+    buildButton.dataset.action = "build";
+    buildButton.dataset.buildingId = building.id;
+    buildButton.textContent = "Build";
+
+    const demolishButton = document.createElement("button");
+    demolishButton.type = "button";
+    demolishButton.dataset.action = "demolish";
+    demolishButton.dataset.buildingId = building.id;
+    demolishButton.textContent = "Demolish";
+
+    const workerGroup = document.createElement("div");
+    workerGroup.className = "worker-group";
+
+    const workerLabel = document.createElement("span");
+    workerLabel.className = "worker-label";
+    workerLabel.textContent = "Workers";
+
+    const workerControls = document.createElement("div");
+    workerControls.className = "worker-controls";
+
+    const decrementButton = document.createElement("button");
+    decrementButton.type = "button";
+    decrementButton.dataset.action = "worker-decrement";
+    decrementButton.dataset.buildingId = building.id;
+    decrementButton.textContent = "−";
+
+    const workerInput = document.createElement("input");
+    workerInput.type = "number";
+    workerInput.min = "0";
+    workerInput.step = "1";
+    workerInput.value = String(building.active || 0);
+    workerInput.dataset.buildingInput = building.id;
+
+    const incrementButton = document.createElement("button");
+    incrementButton.type = "button";
+    incrementButton.dataset.action = "worker-increment";
+    incrementButton.dataset.buildingId = building.id;
+    incrementButton.textContent = "+";
+
+    workerControls.append(decrementButton, workerInput, incrementButton);
+    workerGroup.append(workerLabel, workerControls);
+
+    const assignButton = document.createElement("button");
+    assignButton.type = "button";
+    assignButton.dataset.action = "assign";
+    assignButton.dataset.buildingId = building.id;
+    assignButton.textContent = "Assign";
+
+    actionRow.append(buildButton, demolishButton, workerGroup, assignButton);
+
+    meta.append(headerRow, statusContainer, statRow, bar, ioSection, actionRow);
+    article.append(iconBadge, meta);
+    listItem.appendChild(article);
+
+    return {
+      root: listItem,
+      article,
+      iconBadge,
+      nameHeading,
+      categoryLabel,
+      statusContainer,
+      statusKey: null,
+      builtValue: builtStat.value,
+      activeValue: activeStat.value,
+      capacityValue: capacityStat.value,
+      workerInput,
+      assignButton,
+      incrementButton,
+      decrementButton,
+      consumesList: consumes.list,
+      consumesEmpty: consumes.empty,
+      consumesItems: new Map(),
+      producesList: produces.list,
+      producesEmpty: produces.empty,
+      producesItems: new Map(),
+    };
+  }
+
+  function updateIoList(listElement, emptyElement, itemsMap, resources, updater) {
+    const entries = Object.entries(resources || {}).filter(([, amount]) => {
+      const numeric = Number(amount);
+      return Number.isFinite(numeric) && numeric !== 0;
     });
+
+    if (!entries.length) {
+      emptyElement.style.display = "inline-flex";
+      listElement.style.display = "none";
+      itemsMap.forEach((item) => {
+        item.element.remove();
+      });
+      itemsMap.clear();
+      return;
+    }
+
+    emptyElement.style.display = "none";
+    listElement.style.display = "flex";
+
+    const seen = new Set();
+    entries.forEach(([resource, amount]) => {
+      const key = typeof resource === "string" ? resource.toLowerCase() : resource;
+      let item = itemsMap.get(key);
+      if (!item) {
+        item = createIoItem(key);
+        itemsMap.set(key, item);
+      }
+      listElement.appendChild(item.element);
+      seen.add(key);
+      updater(item, key, Number(amount));
+    });
+
+    itemsMap.forEach((item, key) => {
+      if (!seen.has(key)) {
+        item.element.remove();
+        itemsMap.delete(key);
+      }
+    });
+  }
+
+  function updateBuildingIo(entry, building) {
+    updateIoList(
+      entry.consumesList,
+      entry.consumesEmpty,
+      entry.consumesItems,
+      building.inputs,
+      (item, resource, amount) => {
+        const perCycle = Number(amount) || 0;
+        const stock = getResourceStock(resource);
+        const etaValue = Number(building.pending_eta);
+        const etaText = Number.isFinite(etaValue)
+          ? `${formatAmount(Math.max(0, etaValue))}s`
+          : "—";
+        item.icon.textContent = resourceIconMap[resource] || "📦";
+        item.amount.textContent = formatAmount(perCycle);
+        item.element.title = `Necesita ${formatAmount(
+          perCycle
+        )}/ciclo. Stock actual: ${formatAmount(
+          stock
+        )}. ETA para siguiente ciclo: ${etaText}`;
+        item.element.classList.toggle("io-item-warning", stock + 1e-9 < perCycle);
+      }
+    );
+
+    const cyclesPerMinute =
+      building.cycle_time > 0
+        ? Math.max(0, Number(building.effective_rate) || 0) *
+          (60 / Number(building.cycle_time))
+        : 0;
+
+    updateIoList(
+      entry.producesList,
+      entry.producesEmpty,
+      entry.producesItems,
+      building.outputs,
+      (item, resource, amount) => {
+        const perCycle = Number(amount) || 0;
+        const perMinute = perCycle * cyclesPerMinute;
+        item.icon.textContent = resourceIconMap[resource] || "📦";
+        item.amount.textContent = formatAmount(perCycle);
+        item.element.title = `${formatResourceKey(
+          resource
+        )}: ${formatAmount(perCycle)} por ciclo • ${formatAmount(
+          perMinute
+        )} por minuto`;
+        item.element.classList.remove("io-item-warning");
+      }
+    );
+  }
+
+  function updateBuildingStatus(entry, building) {
+    const reason = typeof building.reason === "string" ? building.reason : null;
+    let statusKey = reason || "";
+    let missingResource = null;
+    if (reason === "missing_input") {
+      missingResource = resolveMissingResource(building);
+      statusKey += `:${missingResource || ""}`;
+    }
+
+    if (statusKey === entry.statusKey) {
+      return;
+    }
+
+    entry.statusKey = statusKey;
+    entry.statusContainer.innerHTML = "";
+
+    if (!reason) {
+      entry.statusContainer.style.display = "none";
+      return;
+    }
+
+    entry.statusContainer.style.display = "flex";
+
+    const chip = document.createElement("span");
+    chip.className = "status-chip";
+    let variant = "neutral";
+    let labelText = formatResourceKey(reason);
+
+    switch (reason) {
+      case "missing_input": {
+        variant = "warning";
+        const label = missingResource ? formatResourceKey(missingResource) : "Recurso";
+        labelText = `Falta: ${label}`;
+        break;
+      }
+      case "no_capacity":
+        variant = "warning";
+        labelText = "Sin capacidad";
+        break;
+      case "inactive":
+        variant = "info";
+        labelText = "Inactivo";
+        break;
+      case "no_workers":
+        variant = "info";
+        labelText = "Sin trabajadores";
+        break;
+      default:
+        break;
+    }
+
+    chip.classList.add(`status-chip--${variant}`);
+
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "status-chip__label";
+    labelSpan.textContent = labelText;
+    chip.appendChild(labelSpan);
+
+    if (reason === "missing_input") {
+      const importButton = document.createElement("button");
+      importButton.type = "button";
+      importButton.className = "status-chip__action";
+      importButton.dataset.action = "trigger-import";
+      importButton.dataset.buildingId = building.id;
+      if (missingResource) {
+        importButton.dataset.resource = missingResource;
+        importButton.title = "Abrir comercio para importar este recurso.";
+      } else {
+        importButton.disabled = true;
+        importButton.title = "No se puede determinar el recurso faltante.";
+      }
+      importButton.textContent = "Importar";
+      chip.appendChild(importButton);
+    }
+
+    entry.statusContainer.appendChild(chip);
+  }
+
+  function updateWorkerControls(entry, building) {
+    const capacity = getCapacity(building);
+    const activeWorkers = Math.max(0, Number(building.active) || 0);
+    entry.workerInput.max = String(capacity);
+    entry.workerInput.value = String(Math.min(capacity, activeWorkers));
+    entry.workerInput.dataset.buildingInput = building.id;
+
+    entry.decrementButton.dataset.buildingId = building.id;
+    entry.incrementButton.dataset.buildingId = building.id;
+    entry.assignButton.dataset.buildingId = building.id;
+
+    entry.decrementButton.disabled = activeWorkers <= 0;
+
+    const disableState = getWorkerDisableState(building);
+    entry.assignButton.disabled = disableState.disabled;
+    entry.incrementButton.disabled = disableState.disabled;
+    if (disableState.disabled) {
+      entry.assignButton.title = disableState.tooltip;
+      entry.incrementButton.title = disableState.tooltip;
+    } else {
+      entry.assignButton.removeAttribute("title");
+      entry.incrementButton.removeAttribute("title");
+    }
+  }
+
+  function updateBuildingCard(entry, building) {
+    entry.root.dataset.buildingId = building.id;
+    entry.article.dataset.buildingId = building.id;
+    entry.iconBadge.textContent = building.icon;
+    entry.iconBadge.setAttribute("aria-label", `${building.name} icon`);
+    entry.nameHeading.textContent = building.name;
+    entry.categoryLabel.textContent = building.category;
+
+    entry.builtValue.textContent = formatAmount(building.built || 0);
+    entry.activeValue.textContent = formatAmount(building.active || 0);
+    entry.capacityValue.textContent = formatAmount(getCapacity(building));
+
+    updateWorkerControls(entry, building);
+    updateBuildingStatus(entry, building);
+    updateBuildingIo(entry, building);
+  }
+
+  function renderBuildings() {
+    state.buildings = state.buildings
+      .map((building) => normaliseBuilding(building))
+      .filter(Boolean);
+
+    const seen = new Set();
 
     state.buildings.forEach((building) => {
       const container = buildingContainers[building.category];
-      if (!container) return;
-      const capacity = getCapacity(building);
-      const article = document.createElement("li");
-      article.innerHTML = `
-        <article class="building-card" data-building-id="${building.id}">
-          <span class="icon-badge" role="img" aria-label="${building.name} icon">${building.icon}</span>
-          <div class="building-meta">
-            <div class="flex items-start justify-between gap-2">
-              <h3 class="text-base font-semibold text-slate-100">${building.name}</h3>
-              <span class="text-[0.65rem] uppercase tracking-[0.2em] text-slate-500">${building.category}</span>
-            </div>
-            <div class="stat-row">
-              <span>Built <strong>${building.built}</strong></span>
-              <span>Active <strong>${building.active}</strong></span>
-              <span>Capacity <strong>${capacity}</strong></span>
-            </div>
-            <div class="bar" aria-hidden="true"></div>
-            ${renderIoSection(building)}
-            <div class="action-row">
-              <button type="button" data-action="build" data-building-id="${building.id}">Build</button>
-              <button type="button" data-action="demolish" data-building-id="${building.id}">Demolish</button>
-              <label class="flex items-center gap-2 text-xs text-slate-300">
-                <span>Workers</span>
-                <input type="number" min="0" step="1" value="${building.active}" data-building-input="${building.id}" />
-              </label>
-              <button type="button" data-action="assign" data-building-id="${building.id}">Assign</button>
-            </div>
-          </div>
-        </article>
-      `;
-      container.appendChild(article);
+      if (!container) {
+        const existing = buildingElementMap.get(building.id);
+        if (existing) {
+          existing.root.remove();
+          buildingElementMap.delete(building.id);
+        }
+        return;
+      }
+
+      let entry = buildingElementMap.get(building.id);
+      if (!entry) {
+        entry = createBuildingCard(building);
+        buildingElementMap.set(building.id, entry);
+      }
+
+      container.appendChild(entry.root);
+      updateBuildingCard(entry, building);
+      seen.add(building.id);
     });
+
+    buildingElementMap.forEach((entry, buildingId) => {
+      if (!seen.has(buildingId)) {
+        entry.root.remove();
+        buildingElementMap.delete(buildingId);
+      }
+    });
+  }
+
+  function triggerImportAction(resourceKey) {
+    const tradePanel = document.getElementById("trade");
+    if (tradePanel) {
+      if (!tradePanel.hasAttribute("tabindex")) {
+        tradePanel.setAttribute("tabindex", "-1");
+      }
+      tradePanel.classList.add("panel-highlight");
+      tradePanel.scrollIntoView({ behavior: "smooth", block: "start" });
+      window.setTimeout(() => {
+        tradePanel.classList.remove("panel-highlight");
+      }, 1200);
+    }
+
+    const normalizedResource =
+      typeof resourceKey === "string" ? resourceKey.toLowerCase() : null;
+    const tradeEntry = normalizedResource
+      ? state.trade.find((entry) => entry.id === normalizedResource)
+      : null;
+
+    if (tradeEntry) {
+      const targetValue = 50;
+      if (tradeEntry.import !== targetValue) {
+        adjustTrade(tradeEntry.id, { import: targetValue });
+      } else {
+        renderTrade();
+      }
+    } else if (tradePanel) {
+      tradePanel.focus({ preventScroll: true });
+    }
+
+    window.setTimeout(() => {
+      if (tradePanel) {
+        tradePanel.focus({ preventScroll: true });
+      }
+      if (!tradeEntry) {
+        return;
+      }
+      const slider = tradeList.querySelector(
+        `[data-trade-import-slider="${tradeEntry.id}"]`
+      );
+      if (slider) {
+        slider.focus();
+        return;
+      }
+      const input = tradeList.querySelector(
+        `[data-trade-input="${tradeEntry.id}"]`
+      );
+      if (input) {
+        input.focus();
+        if (typeof input.select === "function") {
+          input.select();
+        }
+      }
+    }, 120);
   }
 
   function renderJobs() {
@@ -562,8 +993,12 @@
             <span>Export</span>
             <input type="range" min="0" max="100" step="1" value="${item.export}" data-trade-slider="${item.id}" />
           </label>
-          <label class="flex items-center gap-2 text-xs text-slate-300">
+          <label class="flex flex-1 items-center gap-2 text-xs text-slate-300">
             <span>Import</span>
+            <input type="range" min="0" max="100" step="1" value="${item.import}" data-trade-import-slider="${item.id}" />
+          </label>
+          <label class="flex items-center gap-2 text-xs text-slate-300">
+            <span>Cantidad</span>
             <input type="number" min="0" step="1" value="${item.import}" data-trade-input="${item.id}" />
           </label>
         </div>
@@ -661,6 +1096,15 @@
       const input = document.querySelector(`[data-building-input="${buildingId}"]`);
       const desired = input ? Number(input.value) : 0;
       assignBuildingWorkers(buildingId, desired);
+    } else if (action === "worker-increment" || action === "worker-decrement") {
+      const building = state.buildings.find((entry) => entry.id === buildingId);
+      if (!building) return;
+      const delta = action === "worker-increment" ? 1 : -1;
+      const desired = (Number(building.active) || 0) + delta;
+      assignBuildingWorkers(buildingId, desired);
+    } else if (action === "trigger-import") {
+      const { resource } = button.dataset;
+      triggerImportAction(resource);
     }
   }
 
@@ -719,6 +1163,10 @@
       const tradeId = target.dataset.tradeSlider;
       adjustTrade(tradeId, { export: Number(target.value) });
     }
+    if (target.matches("input[data-trade-import-slider]")) {
+      const tradeId = target.dataset.tradeImportSlider;
+      adjustTrade(tradeId, { import: Number(target.value) });
+    }
     if (target.matches("input[data-trade-input]")) {
       const tradeId = target.dataset.tradeInput;
       adjustTrade(tradeId, { import: Number(target.value) });
@@ -738,20 +1186,40 @@
     }
   }
 
+  function updateResourcesFromPayload(payload) {
+    if (!payload || typeof payload.resources !== "object" || payload.resources === null) {
+      return false;
+    }
+    let changed = false;
+    Object.entries(payload.resources).forEach(([key, value]) => {
+      if (typeof key !== "string") {
+        return;
+      }
+      const normalizedKey = key.toLowerCase();
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) {
+        return;
+      }
+      if (state.resources[normalizedKey] !== numeric) {
+        state.resources[normalizedKey] = numeric;
+        changed = true;
+      }
+    });
+    return changed;
+  }
+
   function updateBuildingsFromPayload(payload) {
-    if (!payload || !Array.isArray(payload.buildings)) {
+    if (!payload || typeof payload !== "object") {
       return false;
     }
 
-    const remoteBuildings = payload.buildings
-      .map((building) => normaliseBuilding(building))
-      .filter(Boolean);
+    const resourcesUpdated = updateResourcesFromPayload(payload);
 
-    if (!remoteBuildings.length) {
-      return false;
-    }
+    const remoteBuildings = Array.isArray(payload.buildings)
+      ? payload.buildings.map((building) => normaliseBuilding(building)).filter(Boolean)
+      : [];
 
-    let updated = false;
+    let buildingsUpdated = false;
 
     remoteBuildings.forEach((remote) => {
       const remoteKey = remote.type || remote.id || remote.name;
@@ -778,18 +1246,26 @@
         last_report: remote.last_report,
         cycle_time: remote.cycle_time,
       });
-      updated = true;
+      buildingsUpdated = true;
     });
 
-    if (updated) {
+    if (buildingsUpdated) {
       renderBuildings();
       updateJobsCount();
+      saveState();
+      logState();
+      return true;
+    }
+
+    if (resourcesUpdated) {
+      renderBuildings();
       updateChips();
       saveState();
       logState();
+      return true;
     }
 
-    return updated;
+    return false;
   }
 
   async function loadSeasonFromStateEndpoint() {
