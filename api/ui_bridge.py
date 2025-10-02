@@ -141,39 +141,36 @@ def toggle_building(building_id: int, enabled: bool) -> Dict[str, object]:
 # Worker management
 
 
-def assign_workers(building_id: int, num: int) -> Dict[str, object]:
+def _mutate_workers(building_id: int, num: int, *, operation: str) -> Dict[str, object]:
     state = get_game_state()
     try:
         building_id = int(building_id)
         num = int(num)
-        assigned = state.assign_workers(building_id, num)
+        if operation == "assign":
+            changed = state.assign_workers(building_id, num)
+            key = "assigned"
+        else:
+            changed = state.unassign_workers(building_id, num)
+            key = "unassigned"
         snapshot = state.snapshot_building(building_id)
-        result: Dict[str, object] = _success_response(
-            assigned=assigned,
-            building=snapshot,
-            production_report=snapshot["last_report"],
-        )
-        if assigned < num:
-            result["warning"] = "No se pudieron asignar todos los trabajadores"
-        return result
+        payload: Dict[str, object] = {
+            key: changed,
+            "building": snapshot,
+            "production_report": snapshot["last_report"],
+        }
+        if operation == "assign" and changed < num:
+            payload["warning"] = "No se pudieron asignar todos los trabajadores"
+        return _success_response(**payload)
     except ValueError as exc:
         return _error_response("building_not_found", str(exc))
+
+
+def assign_workers(building_id: int, num: int) -> Dict[str, object]:
+    return _mutate_workers(building_id, num, operation="assign")
 
 
 def unassign_workers(building_id: int, num: int) -> Dict[str, object]:
-    state = get_game_state()
-    try:
-        building_id = int(building_id)
-        num = int(num)
-        unassigned = state.unassign_workers(building_id, num)
-        snapshot = state.snapshot_building(building_id)
-        return _success_response(
-            unassigned=unassigned,
-            building=snapshot,
-            production_report=snapshot["last_report"],
-        )
-    except ValueError as exc:
-        return _error_response("building_not_found", str(exc))
+    return _mutate_workers(building_id, num, operation="unassign")
 
 
 # ---------------------------------------------------------------------------
