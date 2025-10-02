@@ -1,14 +1,24 @@
 from flask import Flask, jsonify, render_template, request
 
 from api import ui_bridge
+from core.scheduler import ensure_tick_loop
 
 app = Flask(__name__)
+ensure_tick_loop()
 
 
 @app.route("/")
 def index():
     """Render the idle village dashboard."""
     return render_template("index.html")
+
+
+@app.get("/state")
+def public_state():
+    """Expose the minimal public state payload required by the frontend."""
+
+    payload = ui_bridge.get_basic_state()
+    return jsonify(payload)
 
 
 @app.post("/api/init")

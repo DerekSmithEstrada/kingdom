@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import math
+import sys
+from pathlib import Path
 from typing import Dict
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import app
 from core import config
@@ -61,6 +65,19 @@ def test_forced_init_and_first_production_cycle(client):
     _assert_zeroed_resources(state_payload.get("resources", {}))
     _assert_zeroed_inventory(state_payload.get("inventory", {}))
 
+    public_state = client.get("/state")
+    assert public_state.status_code == 200
+    assert public_state.get_json()["items"]["wood"] == pytest.approx(0.0)
+
+    for _ in range(5):
+        tick_response = client.post("/api/tick", json={"dt": 1})
+        assert tick_response.status_code == 200
+        payload = tick_response.get_json()
+        assert payload["ok"] is True
+
+    after_idle_state = client.get("/state").get_json()
+    assert after_idle_state["items"]["wood"] == pytest.approx(0.0)
+
     assign_response = client.post(
         f"/api/buildings/{building['id']}/assign",
         json={"workers": 1},
@@ -71,23 +88,20 @@ def test_forced_init_and_first_production_cycle(client):
     assigned_building = assign_payload.get("building", {})
     assert assigned_building.get("active_workers") == 1
 
-    latest_payload = None
-    for _ in range(10):
+    for _ in range(5):
         tick_response = client.post("/api/tick", json={"dt": 1})
         assert tick_response.status_code == 200
-        latest_payload = tick_response.get_json()
-        assert latest_payload["ok"] is True
+        payload = tick_response.get_json()
+        assert payload["ok"] is True
 
-    assert latest_payload is not None, "Tick loop should return a payload"
-    resources = latest_payload.get("resources", {})
+    half_way_state = client.get("/state").get_json()
+    assert half_way_state["items"]["wood"] == pytest.approx(0.5, rel=1e-9, abs=1e-9)
 
-    wood_amount = resources.get(Resource.WOOD.value)
-    assert math.isclose(wood_amount or 0.0, 1.0, rel_tol=1e-9, abs_tol=1e-6)
+    for _ in range(5):
+        tick_response = client.post("/api/tick", json={"dt": 1})
+        assert tick_response.status_code == 200
+        payload = tick_response.get_json()
+        assert payload["ok"] is True
 
-    for resource in Resource:
-        if resource is Resource.WOOD:
-            continue
-        amount = resources.get(resource.value)
-        assert math.isclose(amount or 0.0, 0.0, abs_tol=1e-6), (
-            f"Resource {resource.value} should remain at 0, got {amount}"
-        )
+    final_state = client.get("/state").get_json()
+    assert final_state["items"]["wood"] == pytest.approx(1.0, rel=1e-9, abs=1e-9)

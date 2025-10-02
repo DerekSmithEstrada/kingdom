@@ -70,6 +70,13 @@ def get_state() -> Dict[str, object]:
     return _success_response(**_state_payload(state))
 
 
+def get_basic_state() -> Dict[str, object]:
+    """Return the minimal state payload used by the public /state endpoint."""
+
+    state = get_game_state()
+    return state.basic_state_snapshot()
+
+
 # ---------------------------------------------------------------------------
 # HUD and snapshots
 
