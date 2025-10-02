@@ -21,18 +21,9 @@ class GameState:
 
     def __init__(self) -> None:
         self.notifications: Deque[str] = deque(maxlen=config.NOTIFICATION_QUEUE_LIMIT)
-        self.season_clock = SeasonClock(season_modifiers=config.SEASON_MODIFIERS)
-        self._sync_season_state()
-        self.inventory = Inventory()
-        self.inventory.set_notifier(self.add_notification)
-        self.worker_pool = WorkerPool(config.WORKERS_INICIALES)
-        self.buildings: Dict[int, Building] = {}
-        Building.reset_ids()
-        self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
-        self._initialise_inventory()
         self.last_production_reports: Dict[int, Dict[str, object]] = {}
         self._active_missing_notifications: Dict[Tuple[str, Resource], str] = {}
-        self._initialise_starting_buildings()
+        self._initialise_state()
 
     # ------------------------------------------------------------------
     @classmethod
@@ -42,16 +33,19 @@ class GameState:
         return cls._instance
 
     def reset(self) -> None:
+        self._initialise_state()
+
+    def _initialise_state(self) -> None:
         self.notifications.clear()
         self.season_clock = SeasonClock(season_modifiers=config.SEASON_MODIFIERS)
         self._sync_season_state()
         self.inventory = Inventory()
         self.inventory.set_notifier(self.add_notification)
-        self._initialise_inventory()
         self.worker_pool = WorkerPool(config.WORKERS_INICIALES)
         self.buildings = {}
         Building.reset_ids()
         self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
+        self._initialise_inventory()
         self.last_production_reports = {}
         self._active_missing_notifications = {}
         self._initialise_starting_buildings()

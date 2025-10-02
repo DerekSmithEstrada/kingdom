@@ -17,15 +17,35 @@
         })()
       : false;
 
-  if (shouldForceReset && typeof window !== "undefined") {
+  const persistedSnapshot = (() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    if (shouldForceReset) {
+      try {
+        window.localStorage.removeItem(STORAGE_KEY);
+      } catch (error) {
+        if (typeof console !== "undefined" && typeof console.warn === "function") {
+          console.warn("Idle Village: failed to purge cached state", error);
+        }
+      }
+      return null;
+    }
     try {
-      window.localStorage.removeItem(STORAGE_KEY);
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+      return JSON.parse(raw);
     } catch (error) {
       if (typeof console !== "undefined" && typeof console.warn === "function") {
-        console.warn("Idle Village: failed to purge cached state", error);
+        console.warn("Idle Village: failed to load state", error);
       }
+      return null;
     }
-  }
+  })();
+
+  const hasPersistedState = Boolean(persistedSnapshot);
 
   const resourceIconMap = {
     gold: "🪙",
@@ -339,37 +359,8 @@
   }
 
   function loadState() {
-    if (shouldForceReset || typeof window === "undefined") {
-      return clone(defaultState);
-    }
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (!raw) {
-        return clone(defaultState);
-      }
-      const parsed = JSON.parse(raw);
-      return {
-        resources: { ...defaultState.resources, ...parsed.resources },
-        population: { ...defaultState.population, ...parsed.population },
-        buildings: Array.isArray(parsed.buildings) && parsed.buildings.length
-          ? parsed.buildings
-          : clone(defaultState.buildings),
-        jobs: Array.isArray(parsed.jobs) && parsed.jobs.length
-          ? parsed.jobs
-          : clone(defaultState.jobs),
-        trade: Array.isArray(parsed.trade) && parsed.trade.length
-          ? parsed.trade
-          : clone(defaultState.trade),
-        season: parsed.season
-          ? { ...defaultState.season, ...parsed.season }
-          : clone(defaultState.season),
-      };
-    } catch (error) {
-      if (typeof console !== "undefined" && typeof console.warn === "function") {
-        console.warn("Idle Village: failed to load state", error);
-      }
-      return clone(defaultState);
-    }
+    const source = persistedSnapshot || defaultState;
+    return clone(source);
   }
 
   let state = normaliseState(loadState());
@@ -1604,51 +1595,36 @@
     tooltipHideTimer = window.setTimeout(finalize, 120);
   }
 
-  function handleJobResourceHover(event) {
-    const pill = event.target.closest("[data-job-resource-pill]");
-    if (!pill || !jobsList.contains(pill)) {
-      return;
-    }
-    showJobResourceTooltip(pill);
-  }
-
-  function handleJobResourceLeave(event) {
-    const pill = event.target.closest("[data-job-resource-pill]");
-    if (!pill) {
-      return;
-    }
-    const related = event.relatedTarget;
-    if (related && pill.contains(related)) {
-      return;
-    }
-    if (tooltipTarget === pill) {
-      hideJobResourceTooltip();
-    }
-  }
-
-  function handleJobResourceFocus(event) {
-    const pill = event.target.closest("[data-job-resource-pill]");
-    if (!pill || !jobsList.contains(pill)) {
-      return;
-    }
-    showJobResourceTooltip(pill);
-  }
-
-  function handleJobResourceBlur(event) {
-    const pill = event.target.closest("[data-job-resource-pill]");
-    if (!pill) {
-      return;
-    }
-    const related = event.relatedTarget &&
-      typeof event.relatedTarget.closest === "function"
-      ? event.relatedTarget.closest("[data-job-resource-pill]")
-      : null;
-    if (related) {
-      return;
-    }
-    if (tooltipTarget === pill) {
-      hideJobResourceTooltip();
-    }
+  function createJobResourceTooltipHandler(intent) {
+    const showTooltip = intent === "show";
+    return (event) => {
+      const target = event.target;
+      if (!target || typeof target.closest !== "function") {
+        return;
+      }
+      const pill = target.closest("[data-job-resource-pill]");
+      if (!pill || !jobsList.contains(pill)) {
+        return;
+      }
+      if (showTooltip) {
+        showJobResourceTooltip(pill);
+        return;
+      }
+      const related = event.relatedTarget;
+      if (related) {
+        if (typeof related.closest === "function") {
+          const relatedPill = related.closest("[data-job-resource-pill]");
+          if (relatedPill === pill) {
+            return;
+          }
+        } else if (pill.contains(related)) {
+          return;
+        }
+      }
+      if (tooltipTarget === pill) {
+        hideJobResourceTooltip();
+      }
+    };
   }
 
   function handleGlobalScroll() {
@@ -1943,6 +1919,22 @@
     return false;
   }
 
+  function applyServerSnapshot(payload, options = {}) {
+    if (!payload || typeof payload !== "object") {
+      return false;
+    }
+    const { persist = false } = options;
+    if (payload.season) {
+      updateSeasonState(payload.season);
+    }
+    const updated = updateBuildingsFromPayload(payload);
+    if (persist && !updated) {
+      saveState();
+      logState();
+    }
+    return updated;
+  }
+
   async function loadSeasonFromStateEndpoint() {
     const payload = await fetchJson("/api/state");
     if (!payload) {
@@ -1956,13 +1948,10 @@
   }
 
   async function initialiseSeasonSync() {
-    if (shouldForceReset) {
+    if (shouldForceReset || !hasPersistedState) {
       const initPayload = await fetchJson("/api/init?reset=1", { method: "POST" });
       if (initPayload) {
-        if (initPayload.season) {
-          updateSeasonState(initPayload.season);
-        }
-        updateBuildingsFromPayload(initPayload);
+        applyServerSnapshot(initPayload, { persist: true });
       }
     }
 
@@ -1973,10 +1962,7 @@
 
     const initPayload = await fetchJson("/api/init", { method: "POST" });
     if (initPayload) {
-      if (initPayload.season) {
-        updateSeasonState(initPayload.season);
-      }
-      updateBuildingsFromPayload(initPayload);
+      applyServerSnapshot(initPayload, { persist: !hasPersistedState });
     }
     await loadSeasonFromStateEndpoint();
   }
@@ -2019,14 +2005,17 @@
     });
   }
 
+  const jobResourceTooltipShowHandler = createJobResourceTooltipHandler("show");
+  const jobResourceTooltipHideHandler = createJobResourceTooltipHandler("hide");
+
   document.getElementById("building-accordion").addEventListener("click", handleBuildingActions);
   document.getElementById("building-accordion").addEventListener("change", handleBuildingInput);
   jobsList.addEventListener("click", handleJobActions);
   jobsList.addEventListener("change", handleJobInput);
-  jobsList.addEventListener("mouseover", handleJobResourceHover);
-  jobsList.addEventListener("mouseout", handleJobResourceLeave);
-  jobsList.addEventListener("focusin", handleJobResourceFocus);
-  jobsList.addEventListener("focusout", handleJobResourceBlur);
+  jobsList.addEventListener("mouseover", jobResourceTooltipShowHandler);
+  jobsList.addEventListener("mouseout", jobResourceTooltipHideHandler);
+  jobsList.addEventListener("focusin", jobResourceTooltipShowHandler);
+  jobsList.addEventListener("focusout", jobResourceTooltipHideHandler);
 
   if (typeof window !== "undefined") {
     window.addEventListener("scroll", handleGlobalScroll, { passive: true });
