@@ -29,6 +29,7 @@ class GameState:
         self._wood_tick_residual = 0.0
         self._wood_tick_anchor: Optional[float] = None
         self._tick_count = 0
+        self._state_version = 0
         self.notifications: Deque[str] = deque(maxlen=config.NOTIFICATION_QUEUE_LIMIT)
         self.last_production_reports: Dict[int, Dict[str, object]] = {}
         self._active_missing_notifications: Dict[Tuple[str, Resource], str] = {}
@@ -45,24 +46,26 @@ class GameState:
         self._initialise_state()
 
     def _initialise_state(self) -> None:
-        self._wood_tick_residual = 0.0
-        self._wood_tick_anchor = None
-        self._tick_count = 0
-        self.notifications.clear()
-        self.season_clock = SeasonClock(season_modifiers=config.SEASON_MODIFIERS)
-        self._sync_season_state()
-        self.inventory = Inventory()
-        self.inventory.set_notifier(self.add_notification)
-        self.population_current = int(config.POPULATION_INITIAL)
-        self.population_capacity = int(config.POPULATION_CAPACITY)
-        self.worker_pool = WorkerPool(self.population_current)
-        self.buildings = {}
-        Building.reset_ids()
-        self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
-        self._initialise_inventory()
-        self.last_production_reports = {}
-        self._active_missing_notifications = {}
-        self._initialise_starting_buildings()
+        with self._lock:
+            self._wood_tick_residual = 0.0
+            self._wood_tick_anchor = None
+            self._tick_count = 0
+            self._state_version = 0
+            self.notifications.clear()
+            self.season_clock = SeasonClock(season_modifiers=config.SEASON_MODIFIERS)
+            self._sync_season_state()
+            self.inventory = Inventory()
+            self.inventory.set_notifier(self.add_notification)
+            self.population_current = int(config.POPULATION_INITIAL)
+            self.population_capacity = int(config.POPULATION_CAPACITY)
+            self.worker_pool = WorkerPool(self.population_current)
+            self.buildings = {}
+            Building.reset_ids()
+            self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
+            self._initialise_inventory()
+            self.last_production_reports = {}
+            self._active_missing_notifications = {}
+            self._initialise_starting_buildings()
 
     # ------------------------------------------------------------------
     def _initialise_inventory(self) -> None:
@@ -215,16 +218,30 @@ class GameState:
 
     # ------------------------------------------------------------------
     def assign_workers(self, building_id: int, number: int) -> int:
-        building = self.buildings.get(building_id)
-        if building is None:
-            raise ValueError("Edificio inexistente")
-        return self.worker_pool.assign_workers(building, number)
+        with self._lock:
+            building = self.buildings.get(building_id)
+            if building is None:
+                raise ValueError("Edificio inexistente")
+            change = int(number)
+            if change <= 0:
+                return 0
+            assigned = self.worker_pool.assign_workers(building, change)
+            if assigned > 0:
+                self._state_version += 1
+            return assigned
 
     def unassign_workers(self, building_id: int, number: int) -> int:
-        building = self.buildings.get(building_id)
-        if building is None:
-            raise ValueError("Edificio inexistente")
-        return self.worker_pool.unassign_workers(building, number)
+        with self._lock:
+            building = self.buildings.get(building_id)
+            if building is None:
+                raise ValueError("Edificio inexistente")
+            change = int(number)
+            if change <= 0:
+                return 0
+            removed = self.worker_pool.unassign_workers(building, change)
+            if removed > 0:
+                self._state_version += 1
+            return removed
 
     def get_building(self, building_id: int) -> Optional[Building]:
         return self.buildings.get(building_id)
@@ -245,6 +262,7 @@ class GameState:
             }
             woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
             population = self.population_snapshot()
+            version = int(self._state_version)
 
             if woodcutter is None:
                 built = 0
@@ -275,6 +293,7 @@ class GameState:
             },
             "jobs": {"forester": jobs_payload},
             "population": population,
+            "version": version,
         }
 
     def _apply_simple_resource_tick(self, dt: float, baseline: float) -> None:
@@ -293,10 +312,16 @@ class GameState:
                 return
             self._wood_tick_residual -= whole_seconds
             current = self._wood_tick_anchor
+            state_changed = False
             for _ in range(whole_seconds):
-                current = self._increment_wood_locked(current)
+                next_value = self._increment_wood_locked(current)
+                if next_value != current:
+                    state_changed = True
+                current = next_value
             self._wood_tick_anchor = current
             self.inventory.set_amount(Resource.WOOD, current)
+            if state_changed:
+                self._state_version += 1
             if self._wood_tick_residual <= 1e-9:
                 self._wood_tick_residual = 0.0
                 self._wood_tick_anchor = None
@@ -336,6 +361,8 @@ class GameState:
         return self._build_building_snapshot(building)
 
     def snapshot_state(self) -> Dict[str, object]:
+        with self._lock:
+            version = int(self._state_version)
         return {
             "season": self.season_clock.to_dict(),
             "buildings": self.snapshot_buildings(),
@@ -345,6 +372,7 @@ class GameState:
             "trade": self.snapshot_trade(),
             "notifications": self.list_notifications(),
             "population": self.population_snapshot(),
+            "version": version,
         }
 
     def production_reports_snapshot(self) -> Dict[int, Dict[str, object]]:

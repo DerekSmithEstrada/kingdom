@@ -386,6 +386,7 @@ class Building:
             "name": self.name,
             "built": self.built,
             "active_workers": self.assigned_workers,
+            "workers": self.assigned_workers,
             "max_workers": self.max_workers,
             "inputs": {res.value: amt for res, amt in self.inputs_per_cycle.items()},
             "outputs": {res.value: amt for res, amt in self.outputs_per_cycle.items()},

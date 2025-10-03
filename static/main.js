@@ -499,6 +499,113 @@
     return next;
   }
 
+  function extractPayloadVersion(payload) {
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+    const rawVersion =
+      payload.version !== undefined
+        ? payload.version
+        : payload.state_version !== undefined
+        ? payload.state_version
+        : payload.stateVersion !== undefined
+        ? payload.stateVersion
+        : null;
+    const numeric = Number(rawVersion);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  function resolveBuildingElementKey(buildingId) {
+    if (buildingElementMap.has(buildingId)) {
+      return buildingId;
+    }
+    const numericId = Number(buildingId);
+    if (!Number.isNaN(numericId) && buildingElementMap.has(numericId)) {
+      return numericId;
+    }
+    const stringId = String(buildingId);
+    if (buildingElementMap.has(stringId)) {
+      return stringId;
+    }
+    return buildingId;
+  }
+
+  function findBuildingById(buildingId) {
+    const targetString = String(buildingId);
+    const numericId = Number(buildingId);
+    return state.buildings.find((candidate) => {
+      if (!candidate) return false;
+      if (candidate.id === buildingId) {
+        return true;
+      }
+      if (String(candidate.id) === targetString) {
+        return true;
+      }
+      if (!Number.isNaN(numericId) && Number(candidate.id) === numericId) {
+        return true;
+      }
+      return false;
+    });
+  }
+
+  function setWorkerRequestPending(buildingId, pending) {
+    const key = String(buildingId);
+    if (pending) {
+      pendingWorkerRequests.add(key);
+    } else {
+      pendingWorkerRequests.delete(key);
+    }
+    const resolvedKey = resolveBuildingElementKey(buildingId);
+    const entry = buildingElementMap.get(resolvedKey);
+    if (!entry) {
+      return;
+    }
+    const building = findBuildingById(buildingId);
+    if (building) {
+      updateWorkerControls(entry, building);
+    }
+  }
+
+  function findPrimaryBuildingForJob(jobId) {
+    if (typeof jobId !== "string" || !jobId) {
+      return null;
+    }
+    const normalized = jobId.toLowerCase();
+    const mappedType = JOB_BUILDING_MAP[normalized];
+    return (
+      state.buildings.find((building) => {
+        if (!building) return false;
+        if (
+          typeof building.job === "string" &&
+          building.job.toLowerCase() === normalized
+        ) {
+          return true;
+        }
+        if (
+          mappedType &&
+          typeof building.type === "string" &&
+          building.type.toLowerCase() === mappedType.toLowerCase()
+        ) {
+          return true;
+        }
+        return false;
+      }) || null
+    );
+  }
+
+  function getBuildingAssignedWorkers(building) {
+    if (!building) {
+      return 0;
+    }
+    const candidates = [
+      Number(building.active),
+      Number(building.active_workers),
+      Number(building.workers),
+    ];
+    const value = candidates.find((candidate) => Number.isFinite(candidate));
+    return value !== undefined ? Math.max(0, Math.floor(value)) : 0;
+  }
+
   function formatAmount(value) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) {
@@ -667,6 +774,7 @@
   }
 
   let state = normaliseState(loadState());
+  let latestPublicVersion = Number.NEGATIVE_INFINITY;
 
   logState();
 
@@ -694,6 +802,10 @@
   };
 
   const buildingElementMap = new Map();
+  const pendingWorkerRequests = new Set();
+  const JOB_BUILDING_MAP = {
+    forester: "woodcutter_camp",
+  };
 
   const jobsList = document.getElementById("jobs-list");
   const tradeList = document.getElementById("trade-list");
@@ -1473,17 +1585,39 @@
     entry.incrementButton.dataset.buildingId = building.id;
     entry.assignButton.dataset.buildingId = building.id;
 
-    syncAriaDisabled(entry.decrementButton, activeWorkers <= 0);
-
+    const hasServerId = typeof building.id === "number" && Number.isFinite(building.id);
+    const isPending = pendingWorkerRequests.has(String(building.id));
     const disableState = getWorkerDisableState(building);
-    syncAriaDisabled(entry.assignButton, disableState.disabled);
-    syncAriaDisabled(entry.incrementButton, disableState.disabled);
-    if (disableState.disabled) {
+    const assignDisabled = !hasServerId || isPending || disableState.disabled;
+    const decrementDisabled = !hasServerId || isPending || activeWorkers <= 0;
+
+    syncAriaDisabled(entry.decrementButton, decrementDisabled);
+    syncAriaDisabled(entry.assignButton, assignDisabled);
+    syncAriaDisabled(entry.incrementButton, assignDisabled);
+
+    entry.workerInput.disabled = !hasServerId || isPending;
+    entry.workerInput.setAttribute(
+      "aria-disabled",
+      entry.workerInput.disabled ? "true" : "false"
+    );
+
+    if (isPending) {
+      entry.assignButton.title = "Procesando asignación…";
+      entry.incrementButton.title = "Procesando asignación…";
+      entry.decrementButton.title = "Procesando asignación…";
+    } else if (!hasServerId) {
+      const syncing = "Sincronizando con el servidor…";
+      entry.assignButton.title = syncing;
+      entry.incrementButton.title = syncing;
+      entry.decrementButton.title = syncing;
+    } else if (disableState.disabled) {
       entry.assignButton.title = disableState.tooltip;
       entry.incrementButton.title = disableState.tooltip;
+      entry.decrementButton.removeAttribute("title");
     } else {
       entry.assignButton.removeAttribute("title");
       entry.incrementButton.removeAttribute("title");
+      entry.decrementButton.removeAttribute("title");
     }
   }
 
@@ -1987,7 +2121,7 @@
   }
 
   function adjustBuildingCount(buildingId, delta) {
-    const building = state.buildings.find((entry) => entry.id === buildingId);
+    const building = findBuildingById(buildingId);
     if (!building) return;
     const nextBuilt = Math.max(0, building.built + delta);
     building.built = nextBuilt;
@@ -2000,43 +2134,117 @@
     updateJobsCount();
   }
 
-  function assignBuildingWorkers(buildingId, requested) {
-    const building = state.buildings.find((entry) => entry.id === buildingId);
-    if (!building) return;
+  async function assignBuildingWorkers(buildingId, requested) {
+    const building = findBuildingById(buildingId);
+    if (!building) {
+      return false;
+    }
+
     const capacity = getCapacity(building);
-    const sanitized = Math.max(0, Math.min(capacity, Number.isFinite(requested) ? requested : 0));
-    const assignedElsewhere = getTotalAssigned() - building.active;
-    const available = Math.max(0, (state.population.current || 0) - assignedElsewhere);
-    const finalValue = Math.min(sanitized, available);
-    building.active = finalValue;
-    saveState();
-    renderBuildings();
-    updateJobsCount();
+    const requestedNumber = Number(requested);
+    const sanitized = Math.max(
+      0,
+      Math.min(
+        capacity,
+        Number.isFinite(requestedNumber) ? Math.floor(requestedNumber) : 0
+      )
+    );
+
+    const current = getBuildingAssignedWorkers(building);
+
+    const entry = buildingElementMap.get(resolveBuildingElementKey(building.id));
+    if (sanitized === current) {
+      if (entry) {
+        updateWorkerControls(entry, building);
+      }
+      return true;
+    }
+
+    if (typeof building.id !== "number" || !Number.isFinite(building.id)) {
+      if (entry) {
+        updateWorkerControls(entry, building);
+      }
+      return false;
+    }
+
+    const delta = sanitized - current;
+    const amount = Math.abs(delta);
+    if (amount <= 0) {
+      if (entry) {
+        updateWorkerControls(entry, building);
+      }
+      return true;
+    }
+
+    const operation = delta > 0 ? "assign" : "unassign";
+    setWorkerRequestPending(building.id, true);
+
+    let payload = null;
+    try {
+      const response = await fetch(`/api/buildings/${building.id}/${operation}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workers: amount }),
+      });
+      if (!response) {
+        return false;
+      }
+      try {
+        payload = await response.json();
+      } catch (error) {
+        payload = null;
+      }
+      if (!response.ok) {
+        if (
+          payload &&
+          typeof payload.error_message === "string" &&
+          typeof console !== "undefined" &&
+          typeof console.warn === "function"
+        ) {
+          console.warn("[Idle Village]", payload.error_message);
+        }
+        return false;
+      }
+      if (!payload || payload.ok !== true) {
+        return false;
+      }
+      if (payload.state) {
+        applyPublicState(payload.state);
+      }
+      if (payload.building) {
+        updateBuildingsFromPayload({ buildings: [payload.building] });
+      }
+      return true;
+    } catch (error) {
+      if (typeof console !== "undefined" && typeof console.error === "function") {
+        console.error("[Idle Village] Error asignando trabajadores", error);
+      }
+      return false;
+    } finally {
+      setWorkerRequestPending(building.id, false);
+      if (entry) {
+        updateWorkerControls(entry, building);
+      }
+    }
   }
 
-  function adjustJob(jobId, delta) {
-    const job = state.jobs.find((entry) => entry.id === jobId);
-    if (!job) return;
-    const otherAssigned = getTotalAssigned() - job.assigned;
-    const available = Math.max(0, (state.population.current || 0) - otherAssigned);
-    const desired = job.assigned + delta;
-    const limited = Math.min(job.max, Math.max(0, desired));
-    job.assigned = Math.min(limited, available);
-    saveState();
-    renderJobs();
-    updateJobsCount();
+  async function adjustJob(jobId, delta) {
+    const building = findPrimaryBuildingForJob(jobId);
+    if (!building) {
+      return;
+    }
+    const current = getBuildingAssignedWorkers(building);
+    await assignBuildingWorkers(building.id, current + delta);
   }
 
-  function setJob(jobId, value) {
-    const job = state.jobs.find((entry) => entry.id === jobId);
-    if (!job) return;
-    const otherAssigned = getTotalAssigned() - job.assigned;
-    const available = Math.max(0, (state.population.current || 0) - otherAssigned);
-    const sanitized = Math.max(0, Math.min(job.max, Number(value)));
-    job.assigned = Math.min(sanitized, available);
-    saveState();
-    renderJobs();
-    updateJobsCount();
+  async function setJob(jobId, value) {
+    const building = findPrimaryBuildingForJob(jobId);
+    if (!building) {
+      return;
+    }
+    const numeric = Number(value);
+    const desired = Number.isFinite(numeric) ? Math.floor(numeric) : 0;
+    await assignBuildingWorkers(building.id, desired);
   }
 
   function adjustTrade(itemId, changes) {
@@ -2052,7 +2260,7 @@
     renderTrade();
   }
 
-  function handleBuildingActions(event) {
+  async function handleBuildingActions(event) {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
     const { action, buildingId } = button.dataset;
@@ -2064,13 +2272,13 @@
     } else if (action === "assign") {
       const input = document.querySelector(`[data-building-input="${buildingId}"]`);
       const desired = input ? Number(input.value) : 0;
-      assignBuildingWorkers(buildingId, desired);
+      await assignBuildingWorkers(buildingId, desired);
     } else if (action === "worker-increment" || action === "worker-decrement") {
-      const building = state.buildings.find((entry) => entry.id === buildingId);
+      const building = findBuildingById(buildingId);
       if (!building) return;
       const delta = action === "worker-increment" ? 1 : -1;
       const desired = (Number(building.active) || 0) + delta;
-      assignBuildingWorkers(buildingId, desired);
+      await assignBuildingWorkers(buildingId, desired);
     } else if (action === "trigger-import") {
       const { resource } = button.dataset;
       triggerImportAction(resource);
@@ -2082,14 +2290,14 @@
     if (!input.matches("input[data-building-input]")) return;
     const buildingId = input.dataset.buildingInput;
     const value = Number(input.value);
-    const building = state.buildings.find((entry) => entry.id === buildingId);
+    const building = findBuildingById(buildingId);
     if (!building) return;
     const capacity = getCapacity(building);
     const sanitized = Math.max(0, Math.min(capacity, Number.isFinite(value) ? value : 0));
     input.value = sanitized;
   }
 
-  function handleJobActions(event) {
+  async function handleJobActions(event) {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
     const { action } = button.dataset;
@@ -2103,23 +2311,33 @@
     }
     const { jobId } = button.dataset;
     if (!jobId) return;
+    const building = findPrimaryBuildingForJob(jobId);
+    if (building && pendingWorkerRequests.has(String(building.id))) {
+      return;
+    }
     if (action === "job-increment") {
-      adjustJob(jobId, 1);
+      await adjustJob(jobId, 1);
     } else if (action === "job-decrement") {
-      adjustJob(jobId, -1);
+      await adjustJob(jobId, -1);
     }
   }
 
-  function handleJobInput(event) {
+  async function handleJobInput(event) {
     const input = event.target;
     if (!input.matches("input[data-job-input]")) return;
     const jobId = input.dataset.jobInput;
+    const building = findPrimaryBuildingForJob(jobId);
+    if (building && pendingWorkerRequests.has(String(building.id))) {
+      return;
+    }
     const value = Number(input.value);
     if (!Number.isFinite(value)) {
       input.value = 0;
       return;
     }
-    setJob(jobId, value);
+    const sanitized = Math.max(0, Math.floor(value));
+    input.value = sanitized;
+    await setJob(jobId, sanitized);
   }
 
   function handleTradeActions(event) {
@@ -2461,6 +2679,13 @@
     if (!payload || typeof payload !== "object") {
       return null;
     }
+    const payloadVersion = extractPayloadVersion(payload);
+    if (payloadVersion !== null) {
+      if (payloadVersion < latestPublicVersion) {
+        return null;
+      }
+      latestPublicVersion = Math.max(latestPublicVersion, payloadVersion);
+    }
     const resourcesChanged = updateResourcesFromPayload(payload);
     const buildingsChanged = applyBuildingsFromPublicPayload(payload);
     const jobsChanged = applyJobsFromPublicPayload(payload);
@@ -2490,6 +2715,13 @@
       return false;
     }
     const { persist = false } = options;
+    const payloadVersion = extractPayloadVersion(payload);
+    if (payloadVersion !== null) {
+      if (payloadVersion < latestPublicVersion) {
+        return false;
+      }
+      latestPublicVersion = Math.max(latestPublicVersion, payloadVersion);
+    }
     if (payload.season) {
       updateSeasonState(payload.season);
     }
