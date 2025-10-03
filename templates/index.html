@@ -1,51 +1,359 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="app-shell">
-  <header class="app-header">
-    <div class="app-header__top">
-      <h1 class="app-title">Kingdom production planner</h1>
-      <div class="worker-summary" id="workers-summary" aria-live="polite"></div>
-    </div>
-    <div class="inventory-summary" id="inventory-summary" aria-live="polite"></div>
-  </header>
-
-  <main class="app-main">
-    <section class="stacks-panel" aria-labelledby="stack-panel-title">
-      <header class="panel-header">
-        <div>
-          <h2 id="stack-panel-title">Building stacks</h2>
-          <p class="panel-subtitle">
-            Administra niveles, inputs y consolidación desde una tarjeta por tipo de edificio.
-          </p>
+<header class="app-header bg-slate-800/80 backdrop-blur border-b border-slate-700">
+  <div class="page-container">
+    <div class="header-row">
+      <h1 class="page-title">Idle Village Overview</h1>
+      <div id="season-bar" class="season-bar">
+        <span id="season-label" class="season-label">Season</span>
+        <div class="season-track" aria-hidden="true">
+          <div id="season-fill" class="season-fill"></div>
         </div>
-        <form class="stack-filters" id="stack-filters" aria-label="Filtros de edificios">
-          <label class="filter-item">
-            <input type="checkbox" id="filter-active" />
-            Solo activos
-          </label>
-          <label class="filter-item">
-            <input type="checkbox" id="filter-input-ok" />
-            Inputs OK
-          </label>
-          <label class="filter-item">
-            <input type="checkbox" id="filter-hide-obsolete" />
-            Ocultar obsoletos
-          </label>
-          <label class="filter-item">
-            Nivel ≥
-            <select id="filter-min-level" aria-label="Nivel mínimo">
-              <option value="1">1</option>
-              <option value="2">2</option>
-              <option value="3">3</option>
-              <option value="4">4</option>
-              <option value="5">5</option>
-            </select>
-          </label>
-        </form>
-      </header>
+      </div>
+    </div>
+    <div class="resource-grid mt-4">
+      <div class="chip resource-chip" data-resource="happiness">
+        <span class="label">😊 Happiness</span>
+        <span class="value">0%</span>
+      </div>
+      <div class="chip resource-chip" data-resource="population">
+        <span class="label">👤 Population</span>
+        <span class="value">0/20</span>
+      </div>
+      <div class="chip resource-chip" data-resource="gold">
+        <span class="label">🪙 Gold</span>
+        <span class="value">0</span>
+      </div>
+      <div class="chip resource-chip" data-resource="wood">
+        <span class="label">🪵 Wood</span>
+        <span class="value">0</span>
+      </div>
+      <div class="chip resource-chip" data-resource="sticks">
+        <span class="label">🥢 Sticks</span>
+        <span class="value">0</span>
+      </div>
+      <div class="chip resource-chip" data-resource="planks">
+        <span class="label">🧱 Planks</span>
+        <span class="value">0</span>
+      </div>
+      <div class="chip resource-chip" data-resource="stone">
+        <span class="label">🪨 Stone</span>
+        <span class="value">0</span>
+      </div>
+      <div class="chip resource-chip" data-resource="tools">
+        <span class="label">🛠️ Tools</span>
+        <span class="value">0</span>
+      </div>
+      <div class="chip resource-chip" data-resource="wheat">
+        <span class="label">🌾 Wheat</span>
+        <span class="value">0</span>
+      </div>
+    </div>
+  </div>
+</header>
 
-      <div id="stack-cards" class="stack-cards" aria-live="polite"></div>
+<main class="flex-1">
+  <div class="page-container">
+    <nav class="view-nav" role="tablist" aria-label="Primary views">
+      <button
+        class="view-tab is-active"
+        type="button"
+        id="tab-inventory"
+        role="tab"
+        aria-selected="true"
+        aria-controls="view-inventory"
+        data-view-tab="inventory"
+      >
+        Inventory
+      </button>
+      <button
+        class="view-tab"
+        type="button"
+        id="tab-buildings"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-buildings"
+        data-view-tab="buildings"
+      >
+        Buildings
+      </button>
+      <button
+        class="view-tab"
+        type="button"
+        id="tab-jobs"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-jobs"
+        data-view-tab="jobs"
+      >
+        Jobs
+      </button>
+      <button
+        class="view-tab"
+        type="button"
+        id="tab-trades"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-trades"
+        data-view-tab="trades"
+      >
+        Trades
+      </button>
+      <button
+        class="view-tab"
+        type="button"
+        id="tab-production"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-production"
+        data-view-tab="production"
+      >
+        Production tree
+      </button>
+      <button
+        class="view-tab"
+        type="button"
+        id="tab-research"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-research"
+        data-view-tab="research"
+      >
+        Research
+      </button>
+      <button
+        class="view-tab"
+        type="button"
+        id="tab-stats"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-stats"
+        data-view-tab="stats"
+      >
+        Stats / Logs
+      </button>
+      <button
+        class="view-tab"
+        type="button"
+        id="tab-village"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-village"
+        data-view-tab="village"
+      >
+        Village design
+      </button>
+    </nav>
+
+    <section
+      id="view-inventory"
+      class="view-panel is-active"
+      role="tabpanel"
+      aria-labelledby="tab-inventory"
+      data-view-panel="inventory"
+    >
+      <header class="panel panel--inventory">
+        <div class="panel-header">
+          <h2 class="panel-title">Village Inventory</h2>
+        </div>
+        <div class="inventory-grid">
+          <article class="inventory-card" data-resource="population">
+            <h3 class="inventory-card__label">Population</h3>
+            <p class="inventory-card__value" data-inventory-value>0/0</p>
+          </article>
+          <article class="inventory-card" data-resource="gold">
+            <h3 class="inventory-card__label">Gold</h3>
+            <p class="inventory-card__value" data-inventory-value>0</p>
+          </article>
+          <article class="inventory-card" data-resource="wood">
+            <h3 class="inventory-card__label">Wood</h3>
+            <p class="inventory-card__value" data-inventory-value>0</p>
+          </article>
+          <article class="inventory-card" data-resource="sticks">
+            <h3 class="inventory-card__label">Sticks</h3>
+            <p class="inventory-card__value" data-inventory-value>0</p>
+          </article>
+          <article class="inventory-card" data-resource="planks">
+            <h3 class="inventory-card__label">Planks</h3>
+            <p class="inventory-card__value" data-inventory-value>0</p>
+          </article>
+          <article class="inventory-card" data-resource="stone">
+            <h3 class="inventory-card__label">Stone</h3>
+            <p class="inventory-card__value" data-inventory-value>0</p>
+          </article>
+          <article class="inventory-card" data-resource="tools">
+            <h3 class="inventory-card__label">Tools</h3>
+            <p class="inventory-card__value" data-inventory-value>0</p>
+          </article>
+          <article class="inventory-card" data-resource="wheat">
+            <h3 class="inventory-card__label">Wheat</h3>
+            <p class="inventory-card__value" data-inventory-value>0</p>
+          </article>
+        </div>
+      </header>
     </section>
-  </main>
-</div>
+
+    <section
+      id="view-buildings"
+      class="view-panel"
+      role="tabpanel"
+      aria-labelledby="tab-buildings"
+      data-view-panel="buildings"
+      hidden
+    >
+      <section class="panel" id="buildings">
+        <div class="panel-header building-panel-header">
+          <h2 class="panel-title">Buildings</h2>
+          <div class="density-toggle" id="building-density-toggle" role="group" aria-label="Density mode">
+            <button type="button" class="density-toggle__button is-active" data-density="compact">Compact</button>
+            <button type="button" class="density-toggle__button" data-density="detailed">Detailed</button>
+          </div>
+        </div>
+        <div class="building-toolbar" id="building-filters">
+          <div class="building-toolbar__filters">
+            <div class="filter-group">
+              <span class="filter-group__label">Category</span>
+              <div class="filter-group__chips" id="building-category-chips" role="group" aria-label="Building category"></div>
+            </div>
+            <div class="filter-group">
+              <span class="filter-group__label">Level</span>
+              <div class="filter-group__chips" id="building-level-chips" role="group" aria-label="Building level"></div>
+            </div>
+            <div class="filter-group">
+              <span class="filter-group__label">Status</span>
+              <div class="filter-group__chips" id="building-status-chips" role="group" aria-label="Building status"></div>
+            </div>
+            <div class="filter-group">
+              <span class="filter-group__label">Obsolete</span>
+              <button type="button" class="toggle-chip" id="building-obsolete-toggle" data-filter-obsolete="off" aria-pressed="false">Show obsolete</button>
+            </div>
+          </div>
+          <div class="building-toolbar__sort">
+            <label class="sort-label" for="building-sort">Sort by</label>
+            <select id="building-sort" class="sort-select">
+              <option value="efficiency">Efficiency (output/worker)</option>
+              <option value="output">Output/min (assigned)</option>
+              <option value="cost">Cost to build</option>
+              <option value="alphabetical">Alphabetical</option>
+            </select>
+          </div>
+        </div>
+        <div class="building-grid" id="buildings-grid" role="list"></div>
+      </section>
+    </section>
+
+    <section
+      id="view-jobs"
+      class="view-panel"
+      role="tabpanel"
+      aria-labelledby="tab-jobs"
+      data-view-panel="jobs"
+      hidden
+    >
+      <section class="panel" id="jobs">
+        <div class="panel-header justify-between">
+          <div>
+            <h2 class="panel-title">Jobs <span id="jobs-count">0/20</span> 👤</h2>
+          </div>
+          <div class="relative group">
+            <button class="tooltip-trigger" type="button">Costs</button>
+            <div class="tooltip">
+              <div class="tooltip-arrow"></div>
+              <div class="tooltip-content">
+                <p class="text-sm text-slate-200">
+                  Assigning workers consumes 1 🍞 per day. Demolishing refunds 30% of materials.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="space-y-3" id="jobs-list">
+          <!-- Jobs rendered by JS -->
+        </div>
+      </section>
+    </section>
+
+    <section
+      id="view-trades"
+      class="view-panel"
+      role="tabpanel"
+      aria-labelledby="tab-trades"
+      data-view-panel="trades"
+      hidden
+    >
+      <section class="panel" id="trade" tabindex="-1">
+        <div class="panel-header">
+          <h2 class="panel-title">Trade</h2>
+        </div>
+        <div class="space-y-4" id="trade-list">
+          <!-- Trade rows rendered by JS -->
+        </div>
+      </section>
+    </section>
+
+    <section
+      id="view-production"
+      class="view-panel"
+      role="tabpanel"
+      aria-labelledby="tab-production"
+      data-view-panel="production"
+      hidden
+    >
+      <section class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Production tree</h2>
+        </div>
+        <p class="placeholder-text">Production tree view coming soon.</p>
+      </section>
+    </section>
+
+    <section
+      id="view-research"
+      class="view-panel"
+      role="tabpanel"
+      aria-labelledby="tab-research"
+      data-view-panel="research"
+      hidden
+    >
+      <section class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Research</h2>
+        </div>
+        <p class="placeholder-text">Research upgrades will appear here.</p>
+      </section>
+    </section>
+
+    <section
+      id="view-stats"
+      class="view-panel"
+      role="tabpanel"
+      aria-labelledby="tab-stats"
+      data-view-panel="stats"
+      hidden
+    >
+      <section class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Stats &amp; Logs</h2>
+        </div>
+        <p class="placeholder-text">Game stats and logs will be tracked here.</p>
+      </section>
+    </section>
+
+    <section
+      id="view-village"
+      class="view-panel"
+      role="tabpanel"
+      aria-labelledby="tab-village"
+      data-view-panel="village"
+      hidden
+    >
+      <section class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Village design</h2>
+        </div>
+        <p class="placeholder-text">Village layout visualisation coming soon.</p>
+      </section>
+    </section>
+  </div>
+</main>
 {% endblock %}
