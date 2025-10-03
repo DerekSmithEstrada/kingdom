@@ -135,7 +135,11 @@ CAPACIDADES: Dict[Resource, float] = {
     Resource.HOPS: 200,
 }
 
-WORKERS_INICIALES: int = 20
+# Population configuration
+POPULATION_INITIAL: int = 2
+POPULATION_CAPACITY: int = 20
+
+WORKERS_INICIALES: int = POPULATION_INITIAL
 
 STARTING_RESOURCES: Dict[Resource, float] = {resource: 0.0 for resource in ALL_RESOURCES}
 

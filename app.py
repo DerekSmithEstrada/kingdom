@@ -1,3 +1,5 @@
+import logging
+
 from flask import Flask, jsonify, render_template, request
 
 from api import ui_bridge
@@ -5,6 +7,8 @@ from core.scheduler import ensure_tick_loop
 
 app = Flask(__name__)
 ensure_tick_loop()
+
+logger = logging.getLogger(__name__)
 
 
 @app.route("/")
@@ -18,7 +22,13 @@ def public_state():
     """Expose the minimal public state payload required by the frontend."""
 
     payload = ui_bridge.get_basic_state()
-    return jsonify(payload)
+    wood_amount = payload.get("items", {}).get("wood")
+    logger.info("/state payload wood=%.1f", wood_amount if wood_amount is not None else 0.0)
+    response = jsonify(payload)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.post("/api/init")

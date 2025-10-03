@@ -461,6 +461,33 @@
     return { ...building, ...normalised };
   }
 
+  function normalisePopulation(snapshot) {
+    const base = { current: 0, capacity: 0 };
+    if (!snapshot || typeof snapshot !== "object") {
+      return { ...base };
+    }
+    const rawCurrent = Number(
+      snapshot.current !== undefined ? snapshot.current : snapshot.total
+    );
+    const rawCapacity = Number(
+      snapshot.capacity !== undefined
+        ? snapshot.capacity
+        : snapshot.max !== undefined
+        ? snapshot.max
+        : snapshot.total !== undefined
+        ? snapshot.total
+        : rawCurrent
+    );
+    const current = Number.isFinite(rawCurrent) && rawCurrent > 0 ? Math.floor(rawCurrent) : 0;
+    const capacityValue = Number.isFinite(rawCapacity) && rawCapacity > 0 ? Math.floor(rawCapacity) : 0;
+    const normalisedCapacity = Math.max(capacityValue, current);
+    return {
+      current,
+      capacity: normalisedCapacity,
+      total: current,
+    };
+  }
+
   function normaliseState(snapshot) {
     const next = { ...snapshot };
     next.buildings = Array.isArray(snapshot.buildings)
@@ -468,6 +495,7 @@
           .map((building) => normaliseBuilding(building))
           .filter(Boolean)
       : [];
+    next.population = normalisePopulation(snapshot.population || next.population);
     return next;
   }
 
@@ -583,7 +611,9 @@
       hops: 0,
     },
     population: {
-      total: 20,
+      current: 2,
+      capacity: 20,
+      total: 2,
     },
     buildings: [
       {
@@ -763,11 +793,18 @@
           valueSpan.textContent = `${formatAmount(state.resources.happiness)}%`;
           break;
         case "population":
-          valueSpan.textContent = `${assigned}/${state.population.total}`;
+          valueSpan.textContent = `${state.population.current || 0}/${state.population.capacity || 0}`;
           break;
         default:
           if (state.resources[resourceKey] !== undefined) {
-            valueSpan.textContent = formatAmount(state.resources[resourceKey]);
+            if (resourceKey === "wood") {
+              const numeric = Number(state.resources[resourceKey]);
+              valueSpan.textContent = Number.isFinite(numeric)
+                ? numeric.toFixed(1).replace(".", ",")
+                : "0,0";
+            } else {
+              valueSpan.textContent = formatAmount(state.resources[resourceKey]);
+            }
           }
           break;
       }
@@ -1908,7 +1945,7 @@
 
   function updateJobsCount() {
     const assigned = getTotalAssigned();
-    const total = state.population.total;
+    const total = state.population.current || 0;
     jobsCountLabel.textContent = `${assigned}/${total}`;
     updateChips();
   }
@@ -1933,7 +1970,7 @@
     const capacity = getCapacity(building);
     const sanitized = Math.max(0, Math.min(capacity, Number.isFinite(requested) ? requested : 0));
     const assignedElsewhere = getTotalAssigned() - building.active;
-    const available = Math.max(0, state.population.total - assignedElsewhere);
+    const available = Math.max(0, (state.population.current || 0) - assignedElsewhere);
     const finalValue = Math.min(sanitized, available);
     building.active = finalValue;
     saveState();
@@ -1945,7 +1982,7 @@
     const job = state.jobs.find((entry) => entry.id === jobId);
     if (!job) return;
     const otherAssigned = getTotalAssigned() - job.assigned;
-    const available = Math.max(0, state.population.total - otherAssigned);
+    const available = Math.max(0, (state.population.current || 0) - otherAssigned);
     const desired = job.assigned + delta;
     const limited = Math.min(job.max, Math.max(0, desired));
     job.assigned = Math.min(limited, available);
@@ -1958,7 +1995,7 @@
     const job = state.jobs.find((entry) => entry.id === jobId);
     if (!job) return;
     const otherAssigned = getTotalAssigned() - job.assigned;
-    const available = Math.max(0, state.population.total - otherAssigned);
+    const available = Math.max(0, (state.population.current || 0) - otherAssigned);
     const sanitized = Math.max(0, Math.min(job.max, Number(value)));
     job.assigned = Math.min(sanitized, available);
     saveState();
@@ -2200,6 +2237,19 @@
           applyResource(key, value.amount);
         }
       });
+    }
+
+    if (payload.population && typeof payload.population === "object") {
+      const nextPopulation = normalisePopulation(payload.population);
+      if (
+        state.population.current !== nextPopulation.current ||
+        state.population.capacity !== nextPopulation.capacity
+      ) {
+        state.population.current = nextPopulation.current;
+        state.population.capacity = nextPopulation.capacity;
+        state.population.total = nextPopulation.current;
+        changed = true;
+      }
     }
 
     return changed;
@@ -2596,7 +2646,11 @@
     setInterval(performTick, 5000);
   }
 
-  let woodPollingIntervalId = null;
+  const globalScope =
+    (typeof window !== "undefined" && window) ||
+    (typeof globalThis !== "undefined" ? globalThis : null);
+  let woodPollingIntervalId =
+    (globalScope && globalScope.__idleVillageWoodPollingInterval) || null;
 
   function startWoodPolling() {
     if (typeof fetch !== "function") return;
@@ -2644,6 +2698,9 @@
 
     updateWood();
     woodPollingIntervalId = setInterval(updateWood, 1000);
+    if (globalScope) {
+      globalScope.__idleVillageWoodPollingInterval = woodPollingIntervalId;
+    }
   }
 
   function attachAccordion() {

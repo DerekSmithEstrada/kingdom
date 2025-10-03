@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import deque
 import threading
 from typing import Deque, Dict, List, Mapping, Optional, Set, Tuple
@@ -15,6 +16,9 @@ from .timeclock import SeasonClock
 from .trade import TradeManager
 
 
+logger = logging.getLogger(__name__)
+
+
 class GameState:
     """Central storage for all mutable game data."""
 
@@ -24,6 +28,7 @@ class GameState:
         self._lock = threading.RLock()
         self._wood_tick_residual = 0.0
         self._wood_tick_anchor: Optional[float] = None
+        self._tick_count = 0
         self.notifications: Deque[str] = deque(maxlen=config.NOTIFICATION_QUEUE_LIMIT)
         self.last_production_reports: Dict[int, Dict[str, object]] = {}
         self._active_missing_notifications: Dict[Tuple[str, Resource], str] = {}
@@ -42,12 +47,15 @@ class GameState:
     def _initialise_state(self) -> None:
         self._wood_tick_residual = 0.0
         self._wood_tick_anchor = None
+        self._tick_count = 0
         self.notifications.clear()
         self.season_clock = SeasonClock(season_modifiers=config.SEASON_MODIFIERS)
         self._sync_season_state()
         self.inventory = Inventory()
         self.inventory.set_notifier(self.add_notification)
-        self.worker_pool = WorkerPool(config.WORKERS_INICIALES)
+        self.population_current = int(config.POPULATION_INITIAL)
+        self.population_capacity = int(config.POPULATION_CAPACITY)
+        self.worker_pool = WorkerPool(self.population_current)
         self.buildings = {}
         Building.reset_ids()
         self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
@@ -135,6 +143,18 @@ class GameState:
             self._update_missing_input_notifications(building, report, active_missing)
         self._cleanup_missing_notifications(active_missing)
         self._apply_simple_resource_tick(dt, wood_baseline)
+        with self._lock:
+            self._tick_count += 1
+            if self._tick_count % 5 == 0:
+                wood_amount = self.inventory.get_amount(Resource.WOOD)
+                woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
+                workers = woodcutter.assigned_workers if woodcutter else 0
+                logger.info(
+                    "Tick %s summary: wood=%.1f workers=%s",
+                    self._tick_count,
+                    round(wood_amount, 1),
+                    workers,
+                )
 
     def get_production_modifiers(self, building: Building) -> Dict[str, float]:
         return self.season_clock.get_modifiers(building.type_key)
@@ -215,16 +235,23 @@ class GameState:
 
     def basic_state_snapshot(self) -> Dict[str, object]:
         with self._lock:
-            wood_amount = round(self.inventory.get_amount(Resource.WOOD), 1)
+            items = {
+                resource.value.lower(): round(
+                    self.inventory.get_amount(resource), 1
+                )
+                for resource in ALL_RESOURCES
+            }
             woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
             workers = woodcutter.assigned_workers if woodcutter else 0
+            population = self.population_snapshot()
         return {
-            "items": {"wood": wood_amount},
+            "items": items,
             "buildings": {
                 config.WOODCUTTER_CAMP: {
                     "workers": int(workers),
                 }
             },
+            "population": population,
         }
 
     def _apply_simple_resource_tick(self, dt: float, baseline: float) -> None:
@@ -290,6 +317,7 @@ class GameState:
             "jobs": self.snapshot_jobs(),
             "trade": self.snapshot_trade(),
             "notifications": self.list_notifications(),
+            "population": self.population_snapshot(),
         }
 
     def production_reports_snapshot(self) -> Dict[int, Dict[str, object]]:
@@ -310,6 +338,12 @@ class GameState:
                 for building_id, building in self.buildings.items()
             },
         }
+
+    def population_snapshot(self) -> Dict[str, int]:
+        with self._lock:
+            current = int(self.population_current)
+            capacity = int(self.population_capacity)
+        return {"current": current, "capacity": capacity}
 
     def snapshot_trade(self) -> Dict[str, Dict[str, float | str]]:
         return self.trade_manager.snapshot()

@@ -29,6 +29,15 @@ def _assign_workers(count: int) -> None:
     ui_bridge.assign_workers(building.id, count)
 
 
+def test_basic_state_snapshot_defaults():
+    state = get_game_state()
+    snapshot = state.basic_state_snapshot()
+    assert snapshot["population"] == {"current": 2, "capacity": 20}
+    assert snapshot["buildings"][config.WOODCUTTER_CAMP]["workers"] == 0
+    for key, amount in snapshot["items"].items():
+        assert amount == pytest.approx(0.0), f"{key} expected to be 0"
+
+
 def test_initial_wood_is_zero():
     assert _get_wood_amount() == 0.0
 
