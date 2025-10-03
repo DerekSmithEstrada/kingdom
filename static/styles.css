@@ -75,6 +75,92 @@ button:focus-visible {
   gap: var(--space-20);
 }
 
+.view-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-12);
+  margin-bottom: var(--space-20);
+  padding: var(--space-8);
+  border-radius: var(--card-radius);
+  border: 1px solid rgb(30 41 59 / 0.8);
+  background: rgb(15 23 42 / 0.65);
+  box-shadow: inset 0 1px 0 rgb(148 163 184 / 0.08);
+}
+
+.view-tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: rgb(148 163 184);
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--space-12);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: background-color 0.2s ease, color 0.2s ease;
+  cursor: pointer;
+}
+
+.view-tab.is-active {
+  color: rgb(226 232 240);
+  background: rgb(37 99 235 / 0.15);
+  box-shadow: inset 0 0 0 1px rgb(96 165 250 / 0.45);
+}
+
+.view-tab:hover,
+.view-tab:focus-visible {
+  color: rgb(226 232 240);
+}
+
+.view-panel {
+  display: block;
+}
+
+.view-panel[hidden] {
+  display: none;
+}
+
+.inventory-grid {
+  display: grid;
+  gap: var(--space-16);
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+}
+
+.inventory-card {
+  border-radius: var(--card-radius);
+  border: 1px solid rgb(51 65 85 / 0.7);
+  background: linear-gradient(160deg, rgb(30 41 59 / 0.85), rgb(15 23 42 / 0.8));
+  padding: var(--card-padding);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  box-shadow: 0 18px 40px -25px rgb(8 15 30 / 0.9);
+}
+
+.inventory-card__label {
+  margin: 0;
+  font-size: 0.85rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgb(148 163 184);
+}
+
+.inventory-card__value {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 600;
+  color: rgb(226 232 240);
+  font-variant-numeric: tabular-nums;
+}
+
+.placeholder-text {
+  margin: 0;
+  font-size: 0.95rem;
+  color: rgb(148 163 184);
+  line-height: 1.6;
+}
+
 @media (min-width: 1024px) {
   .dashboard-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -106,6 +192,48 @@ button:focus-visible {
 
   #trade {
     align-self: stretch;
+  }
+}
+
+@media (max-width: 48rem) {
+  main.flex-1 {
+    padding-bottom: 6.5rem;
+  }
+
+  .view-nav {
+    position: sticky;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 30;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0;
+    padding: 0;
+    border-radius: var(--space-8) var(--space-8) 0 0;
+    backdrop-filter: blur(14px);
+    background: rgb(15 23 42 / 0.92);
+    border: 1px solid rgb(30 41 59 / 0.9);
+  }
+
+  .view-tab {
+    border-radius: 0;
+    padding-block: var(--space-12);
+    border-right: 1px solid rgb(30 41 59 / 0.9);
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+  }
+
+  .view-tab:nth-child(4n) {
+    border-right: none;
+  }
+
+  .inventory-grid {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+
+  .accordion.open .accordion-content {
+    max-height: none;
   }
 }
 

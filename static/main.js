@@ -1224,6 +1224,41 @@
   const seasonLabel = document.getElementById("season-label");
   const seasonFill = document.getElementById("season-fill");
 
+  const VIEW_KEYS = [
+    "inventory",
+    "buildings",
+    "jobs",
+    "trades",
+    "production",
+    "research",
+    "stats",
+    "village",
+  ];
+  const viewTabs = Array.from(document.querySelectorAll("[data-view-tab]"));
+  const viewPanels = Array.from(document.querySelectorAll("[data-view-panel]"));
+  const viewHotkeys = {
+    Digit1: "inventory",
+    Digit2: "buildings",
+    Digit3: "jobs",
+    Digit4: "trades",
+    Digit5: "production",
+    Digit6: "research",
+    Digit7: "stats",
+    Digit8: "village",
+    Numpad1: "inventory",
+    Numpad2: "buildings",
+    Numpad3: "jobs",
+    Numpad4: "trades",
+    Numpad5: "production",
+    Numpad6: "research",
+    Numpad7: "stats",
+    Numpad8: "village",
+  };
+
+  const viewState = {
+    active: "inventory",
+  };
+
   const jobsPanel = document.getElementById("jobs");
   let resourceFilterChip = null;
   let resourceFilterLabel = null;
@@ -1235,6 +1270,54 @@
   let jobResourceTooltipHeading = null;
   let tooltipTarget = null;
   let tooltipHideTimer = null;
+
+  function isEditableElement(element) {
+    if (!element) {
+      return false;
+    }
+    const tagName = element.tagName;
+    if (!tagName) {
+      return Boolean(element.isContentEditable);
+    }
+    const normalized = tagName.toLowerCase();
+    if (["input", "textarea", "select", "button"].includes(normalized)) {
+      return true;
+    }
+    return Boolean(element.isContentEditable);
+  }
+
+  function setActiveView(viewKey, options = {}) {
+    if (!VIEW_KEYS.includes(viewKey)) {
+      return;
+    }
+    const { force = false } = options;
+    if (!force && viewState.active === viewKey) {
+      return;
+    }
+    viewState.active = viewKey;
+    viewTabs.forEach((tab) => {
+      const isActive = tab.dataset.viewTab === viewKey;
+      tab.classList.toggle("is-active", isActive);
+      tab.setAttribute("aria-selected", isActive ? "true" : "false");
+      tab.tabIndex = isActive ? 0 : -1;
+    });
+    viewPanels.forEach((panel) => {
+      const isActive = panel.dataset.viewPanel === viewKey;
+      panel.classList.toggle("is-active", isActive);
+      if (isActive) {
+        panel.removeAttribute("hidden");
+      } else {
+        panel.setAttribute("hidden", "");
+      }
+    });
+  }
+
+  function focusActiveViewTab() {
+    const activeTab = viewTabs.find((tab) => tab.dataset.viewTab === viewState.active);
+    if (activeTab && typeof activeTab.focus === "function") {
+      activeTab.focus();
+    }
+  }
 
   if (jobsPanel && jobsList) {
     const panelHeader = jobsPanel.querySelector(".panel-header");
@@ -1365,32 +1448,49 @@
   }
 
   function updateChips() {
-    const chipElements = document.querySelectorAll(".chip");
     const assigned = getTotalAssigned();
-    chipElements.forEach((chip) => {
-      const resourceKey = chip.dataset.resource;
-      const valueSpan = chip.querySelector(".value");
-      if (!valueSpan) return;
-      switch (resourceKey) {
-        case "happiness":
-          valueSpan.textContent = `${formatAmount(state.resources.happiness)}%`;
-          break;
-        case "population":
-          {
-            const total = state.population.current || 0;
-            const capacity = state.population.capacity || 0;
-            const providedAvailable = Number(state.population.available);
-            const fallbackAvailable = Math.max(0, Math.min(total, total - assigned));
-            const available = Number.isFinite(providedAvailable)
-              ? Math.max(0, Math.min(total, Math.floor(providedAvailable)))
-              : fallbackAvailable;
-            valueSpan.textContent = `${available}/${capacity}`;
-          }
-          break;
-        default:
-          valueSpan.textContent = formatInventoryValue(state.resources[resourceKey]);
-          break;
-      }
+
+    function updateDisplays(resourceKey, value) {
+      document
+        .querySelectorAll(`.chip[data-resource="${resourceKey}"] .value`)
+        .forEach((element) => {
+          element.textContent = value;
+        });
+      document
+        .querySelectorAll(
+          `.inventory-card[data-resource="${resourceKey}"] [data-inventory-value]`
+        )
+        .forEach((element) => {
+          element.textContent = value;
+        });
+    }
+
+    updateDisplays("happiness", `${formatAmount(state.resources.happiness)}%`);
+
+    const total = state.population.current || 0;
+    const capacity = state.population.capacity || 0;
+    const providedAvailable = Number(state.population.available);
+    const fallbackAvailable = Math.max(0, Math.min(total, total - assigned));
+    const available = Number.isFinite(providedAvailable)
+      ? Math.max(0, Math.min(total, Math.floor(providedAvailable)))
+      : fallbackAvailable;
+    updateDisplays("population", `${available}/${capacity}`);
+
+    const trackResources = [
+      "gold",
+      "wood",
+      "sticks",
+      "planks",
+      "stone",
+      "tools",
+      "wheat",
+    ];
+
+    trackResources.forEach((resourceKey) => {
+      const value = formatInventoryValue(
+        state.resources ? state.resources[resourceKey] : 0
+      );
+      updateDisplays(resourceKey, value);
     });
   }
 
@@ -4208,22 +4308,99 @@
     }
   }
 
-  function attachAccordion() {
-    const triggers = document.querySelectorAll(".accordion-trigger");
-    triggers.forEach((trigger, index) => {
-      const accordion = trigger.closest(".accordion");
-      if (!accordion) return;
-      trigger.addEventListener("click", () => {
-        accordion.classList.toggle("open");
+  function attachViewNavigation() {
+    viewTabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const targetView = tab.dataset.viewTab;
+        if (targetView) {
+          setActiveView(targetView);
+        }
       });
-      if (index === 0) {
-        accordion.classList.add("open");
-      }
+      tab.addEventListener("keydown", (event) => {
+        if (event.key === " " || event.key === "Enter") {
+          event.preventDefault();
+          const targetView = tab.dataset.viewTab;
+          if (targetView) {
+            setActiveView(targetView);
+          }
+        }
+      });
     });
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("keydown", (event) => {
+        if (event.defaultPrevented) {
+          return;
+        }
+        if (event.metaKey || event.ctrlKey || event.altKey) {
+          return;
+        }
+        if (isEditableElement(event.target)) {
+          return;
+        }
+        const viewKey = viewHotkeys[event.code];
+        if (!viewKey) {
+          return;
+        }
+        event.preventDefault();
+        setActiveView(viewKey);
+        focusActiveViewTab();
+      });
+    }
+  }
+
+  function attachAccordion() {
+    const accordions = Array.from(document.querySelectorAll(".accordion"));
+    if (!accordions.length) {
+      return;
+    }
+
+    const applyDefaults = () => {
+      const isMobile =
+        typeof window !== "undefined" &&
+        window.matchMedia("(max-width: 48rem)").matches;
+      if (isMobile) {
+        accordions.forEach((accordion) => {
+          accordion.classList.remove("open");
+        });
+        return;
+      }
+      const alreadyOpen = accordions.some((accordion) =>
+        accordion.classList.contains("open")
+      );
+      if (!alreadyOpen && accordions[0]) {
+        accordions[0].classList.add("open");
+      }
+    };
+
+    accordions.forEach((accordion) => {
+      const trigger = accordion.querySelector(".accordion-trigger");
+      if (!trigger) {
+        return;
+      }
+      trigger.addEventListener("click", () => {
+        const isOpen = accordion.classList.contains("open");
+        accordions.forEach((other) => {
+          if (other !== accordion) {
+            other.classList.remove("open");
+          }
+        });
+        accordion.classList.toggle("open", !isOpen);
+      });
+    });
+
+    applyDefaults();
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("resize", applyDefaults);
+    }
   }
 
   const jobResourceTooltipShowHandler = createJobResourceTooltipHandler("show");
   const jobResourceTooltipHideHandler = createJobResourceTooltipHandler("hide");
+
+  attachViewNavigation();
+  setActiveView(viewState.active, { force: true });
 
   document.getElementById("building-accordion").addEventListener("click", handleBuildingActions);
   document.getElementById("building-accordion").addEventListener("change", handleBuildingInput);
