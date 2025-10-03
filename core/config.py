@@ -70,17 +70,114 @@ BUILDING_NAMES: Dict[str, str] = {
 
 BUILD_COSTS: Dict[str, Dict[Resource, float]] = {
     WOODCUTTER_CAMP: {
-        Resource.STICKS: 30,
-        Resource.STONE: 20,
-        Resource.GOLD: 10,
+        Resource.WOOD: 10,
+        Resource.GOLD: 5,
     },
-    STICK_GATHERING_TENT: {Resource.STICKS: 4, Resource.GOLD: 1},
-    STONE_GATHERING_TENT: {Resource.STICKS: 4, Resource.GOLD: 2},
+    STICK_GATHERING_TENT: {Resource.GOLD: 1},
+    STONE_GATHERING_TENT: {Resource.GOLD: 2},
     LUMBER_HUT: {},
     MINER: {},
     FARMER: {},
     ARTISAN: {},
 }
+
+
+@dataclass(frozen=True)
+class BuildingMetadata:
+    """UI-centric metadata for building presentation."""
+
+    category: str
+    icon: str
+    category_label: str | None = None
+    job: Optional[str] = None
+    job_name: Optional[str] = None
+    job_icon: Optional[str] = None
+    build_label: Optional[str] = None
+
+
+BUILDING_METADATA: Dict[str, BuildingMetadata] = {
+    WOODCUTTER_CAMP: BuildingMetadata(
+        category="wood",
+        category_label="Wood",
+        icon="🪓",
+        job="forester",
+        job_name="Forester",
+        job_icon="🌲",
+        build_label="Woodcutter Camp",
+    ),
+    STICK_GATHERING_TENT: BuildingMetadata(
+        category="wood",
+        category_label="Wood",
+        icon="🥢",
+        job="stick_gatherer",
+        job_name="Stick Gatherer",
+        job_icon="🥢",
+        build_label="Stick-gathering Tent",
+    ),
+    STONE_GATHERING_TENT: BuildingMetadata(
+        category="stone",
+        category_label="Stone",
+        icon="🪨",
+        job="stone_gatherer",
+        job_name="Stone Gatherer",
+        job_icon="🪨",
+        build_label="Stone-gathering Tent",
+    ),
+    LUMBER_HUT: BuildingMetadata(
+        category="wood",
+        category_label="Wood",
+        icon="🏚️",
+        job="artisan",
+        job_name="Artisan",
+        job_icon="🛠️",
+        build_label="Lumber Hut",
+    ),
+    MINER: BuildingMetadata(
+        category="stone",
+        category_label="Stone",
+        icon="⛏️",
+        job="miner",
+        job_name="Miner",
+        job_icon="⛏️",
+        build_label="Miner",
+    ),
+    FARMER: BuildingMetadata(
+        category="crops",
+        category_label="Crops",
+        icon="🌾",
+        job="farmer",
+        job_name="Farmer",
+        job_icon="🌾",
+        build_label="Farmer",
+    ),
+    ARTISAN: BuildingMetadata(
+        category="crops",
+        category_label="Crops",
+        icon="🛠️",
+        job="artisan",
+        job_name="Artisan",
+        job_icon="🛠️",
+        build_label="Artisan Workshop",
+    ),
+}
+
+
+def get_building_metadata(type_key: str) -> BuildingMetadata:
+    """Return the metadata for ``type_key`` with sensible defaults."""
+
+    meta = BUILDING_METADATA.get(type_key)
+    if meta is not None:
+        return meta
+    name = BUILDING_NAMES.get(type_key, type_key.title())
+    return BuildingMetadata(
+        category="general",
+        category_label="General",
+        icon="🏗️",
+        job=None,
+        job_name=None,
+        job_icon=None,
+        build_label=name,
+    )
 
 # Backwards compatibility alias for legacy references.
 COSTOS_CONSTRUCCION: Dict[str, Dict[Resource, float]] = BUILD_COSTS
@@ -234,18 +331,6 @@ STARTING_RESOURCES[Resource.GOLD] = 10.0
 STARTING_BUILDINGS: Tuple[Mapping[str, object], ...] = (
     {
         "type": WOODCUTTER_CAMP,
-        "workers": 0,
-        "built": True,
-        "enabled": True,
-    },
-    {
-        "type": STICK_GATHERING_TENT,
-        "workers": 0,
-        "built": True,
-        "enabled": True,
-    },
-    {
-        "type": STONE_GATHERING_TENT,
         "workers": 0,
         "built": True,
         "enabled": True,

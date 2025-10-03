@@ -327,6 +327,7 @@
     planks: "🪚",
     plank: "🪚",
     stone: "🪨",
+    stones: "🪨",
     tools: "🛠️",
     wheat: "🌾",
     grain: "🌾",
@@ -457,6 +458,45 @@
         ? normaliseKey(typeKey)
         : null);
 
+    const categoryKey =
+      typeof building.category === "string" && building.category.trim()
+        ? building.category.trim().toLowerCase()
+        : "general";
+    const categoryLabel =
+      typeof building.category_label === "string" && building.category_label.trim()
+        ? building.category_label.trim()
+        : categoryKey.charAt(0).toUpperCase() + categoryKey.slice(1);
+    const icon =
+      typeof building.icon === "string" && building.icon.trim()
+        ? building.icon
+        : "🏗️";
+    const jobId =
+      typeof building.job === "string" && building.job.trim()
+        ? building.job.trim()
+        : null;
+    const jobName =
+      typeof building.job_name === "string" && building.job_name.trim()
+        ? building.job_name.trim()
+        : jobId
+        ? formatResourceKey(jobId)
+        : null;
+    const jobIcon =
+      typeof building.job_icon === "string" && building.job_icon.trim()
+        ? building.job_icon
+        : null;
+    const buildLabel =
+      typeof building.build_label === "string" && building.build_label.trim()
+        ? building.build_label.trim()
+        : typeof building.name === "string"
+        ? building.name
+        : jobName || null;
+    const perWorkerOutputs = normaliseResourceMap(
+      building.per_worker_output_rate || building.perWorkerOutputRate
+    );
+    const perWorkerInputs = normaliseResourceMap(
+      building.per_worker_input_rate || building.perWorkerInputRate
+    );
+
     const normalised = {
       inputs,
       outputs,
@@ -481,6 +521,15 @@
           : typeof building.capacityPerBuilding === "number"
           ? building.capacityPerBuilding
           : 0,
+      category: categoryKey,
+      category_label: categoryLabel,
+      icon,
+      job: jobId,
+      job_name: jobName,
+      job_icon: jobIcon,
+      build_label: buildLabel,
+      per_worker_output_rate: perWorkerOutputs,
+      per_worker_input_rate: perWorkerInputs,
     };
 
     if (Number.isFinite(perMinuteValue)) {
@@ -802,6 +851,32 @@
     return numberFormatter.format(toDisplayInt(value));
   }
 
+  function formatPerSecondRate(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return "0";
+    }
+    const precision = Math.abs(numeric) >= 1 ? 1 : 2;
+    return Number(numeric.toFixed(precision)).toString();
+  }
+
+  function formatRateList(map, direction) {
+    if (!map || typeof map !== "object") {
+      return [];
+    }
+    return Object.entries(map)
+      .map(([resource, amount]) => {
+        const numeric = Number(amount);
+        if (!Number.isFinite(numeric) || numeric === 0) {
+          return null;
+        }
+        const label = formatResourceKey(resource);
+        const sign = direction === "input" ? "−" : "+";
+        return `${sign}${formatPerSecondRate(Math.abs(numeric))} ${label}/s`;
+      })
+      .filter(Boolean);
+  }
+
   function formatResourceKey(key) {
     if (typeof key !== "string") {
       return "";
@@ -867,6 +942,13 @@
   }
 
   function getWorkerDisableState(building) {
+    const builtValue = building ? Number(building.built) : 0;
+    if (!Number.isFinite(builtValue) || builtValue <= 0) {
+      return {
+        disabled: true,
+        tooltip: "Build this structure before assigning workers.",
+      };
+    }
     const reason = building && building.reason;
     if (reason === "missing_input") {
       const missing = resolveMissingResource(building);
@@ -937,16 +1019,23 @@
         id: "woodcutter_camp",
         type: "woodcutter_camp",
         job: "forester",
+        job_name: "Forester",
+        job_icon: "🌲",
         name: "Woodcutter Camp",
         category: "wood",
+        category_label: "Wood",
+        build_label: "Woodcutter Camp",
         built: 1,
         active: 0,
         capacityPerBuilding: 30,
+        max_workers: 2,
         storage: { wood: 30 },
-        cost: { sticks: 30, stone: 20, gold: 10 },
+        cost: { wood: 10, gold: 5 },
         icon: "🪓",
         inputs: {},
         outputs: { wood: 0.01 },
+        per_worker_output_rate: { wood: 0.01 },
+        per_worker_input_rate: { sticks: 0.04, stone: 0.04 },
         produces_per_min: 0,
         produces_unit: "wood/min",
         effective_rate: 0,
@@ -965,16 +1054,24 @@
       {
         id: "stick_gathering_tent",
         type: "stick_gathering_tent",
+        job: "stick_gatherer",
+        job_name: "Stick Gatherer",
+        job_icon: "🥢",
         name: "Stick-gathering Tent",
         category: "wood",
-        built: 1,
+        category_label: "Wood",
+        build_label: "Stick-gathering Tent",
+        built: 0,
         active: 0,
         capacityPerBuilding: 30,
+        max_workers: 3,
         storage: { sticks: 30 },
-        cost: { sticks: 4, gold: 1 },
+        cost: { gold: 1 },
         icon: "🥢",
         inputs: {},
         outputs: { sticks: 0.01 },
+        per_worker_output_rate: { sticks: 0.01 },
+        per_worker_input_rate: {},
         produces_per_min: 0,
         produces_unit: "sticks/min",
         effective_rate: 0,
@@ -993,16 +1090,24 @@
       {
         id: "stone_gathering_tent",
         type: "stone_gathering_tent",
+        job: "stone_gatherer",
+        job_name: "Stone Gatherer",
+        job_icon: "🪨",
         name: "Stone-gathering Tent",
         category: "stone",
-        built: 1,
+        category_label: "Stone",
+        build_label: "Stone-gathering Tent",
+        built: 0,
         active: 0,
         capacityPerBuilding: 30,
+        max_workers: 3,
         storage: { stone: 30 },
-        cost: { sticks: 4, gold: 2 },
+        cost: { gold: 2 },
         icon: "🪨",
         inputs: {},
         outputs: { stone: 0.01 },
+        per_worker_output_rate: { stone: 0.01 },
+        per_worker_input_rate: {},
         produces_per_min: 0,
         produces_unit: "stone/min",
         effective_rate: 0,
@@ -1020,13 +1125,23 @@
       },
     ],
     jobs: [
-      { id: "forester", name: "Forester", assigned: 0, max: 10, icon: "🌲" },
+      {
+        id: "forester",
+        name: "Forester",
+        assigned: 0,
+        max: 2,
+        icon: "🌲",
+        perWorkerOutputs: { wood: 0.01 },
+        perWorkerInputs: { sticks: 0.04, stone: 0.04 },
+      },
       {
         id: "stick_gatherer",
         name: "Stick Gatherer",
         assigned: 0,
         max: 3,
         icon: "🥢",
+        perWorkerOutputs: { sticks: 0.01 },
+        perWorkerInputs: {},
       },
       {
         id: "stone_gatherer",
@@ -1034,6 +1149,8 @@
         assigned: 0,
         max: 3,
         icon: "🪨",
+        perWorkerOutputs: { stone: 0.01 },
+        perWorkerInputs: {},
       },
     ],
     trade: [
@@ -1094,6 +1211,8 @@
   const pendingWorkerRequests = new Set();
   const JOB_BUILDING_MAP = {
     forester: "woodcutter_camp",
+    stick_gatherer: "stick_gathering_tent",
+    stone_gatherer: "stone_gathering_tent",
   };
 
   const JOB_ASSIGNMENT_PLACEHOLDER_MESSAGE =
@@ -1348,6 +1467,11 @@
     registerAlias("woodcuttercamp", "forester");
     registerAlias("woodcutter", "forester");
     registerAlias("wood", "forester");
+    registerAlias("stick_gathering_tent", "stick_gatherer");
+    registerAlias("stick_gathering", "stick_gatherer");
+    registerAlias("stick_tent", "stick_gatherer");
+    registerAlias("stick", "stick_gatherer");
+    registerAlias("sticks", "stick_gatherer");
     registerAlias("lumber_hut", "artisan");
     registerAlias("lumberhut", "artisan");
     registerAlias("lumber", "artisan");
@@ -1355,6 +1479,10 @@
     registerAlias("stone_quarry", "miner");
     registerAlias("quarry", "miner");
     registerAlias("stone", "miner");
+    registerAlias("stone_gathering_tent", "stone_gatherer");
+    registerAlias("stone_gathering", "stone_gatherer");
+    registerAlias("stone_tent", "stone_gatherer");
+    registerAlias("stones", "stone_gatherer");
     registerAlias("wheat_farm", "farmer");
     registerAlias("grain_farm", "farmer");
     registerAlias("farm", "farmer");
@@ -1511,6 +1639,104 @@
 
   const JOB_RESOURCE_EPSILON = 1e-6;
 
+  function ensureJobEntryFromBuilding(building) {
+    if (!building || typeof building !== "object") {
+      return false;
+    }
+    const jobId =
+      typeof building.job === "string" && building.job.trim()
+        ? building.job.trim()
+        : null;
+    if (!jobId) {
+      return false;
+    }
+    const jobName =
+      typeof building.job_name === "string" && building.job_name.trim()
+        ? building.job_name.trim()
+        : formatResourceKey(jobId);
+    const jobIcon =
+      typeof building.job_icon === "string" && building.job_icon.trim()
+        ? building.job_icon
+        : "👷";
+    const perWorkerOutputs =
+      building.per_worker_output_rate &&
+      typeof building.per_worker_output_rate === "object"
+        ? { ...building.per_worker_output_rate }
+        : {};
+    const perWorkerInputs =
+      building.per_worker_input_rate &&
+      typeof building.per_worker_input_rate === "object"
+        ? { ...building.per_worker_input_rate }
+        : {};
+    let job = state.jobs.find((candidate) => candidate.id === jobId);
+    let changed = false;
+    if (!job) {
+      job = {
+        id: jobId,
+        name: jobName,
+        assigned: 0,
+        max: Math.max(0, Number(building.max_workers) || 0),
+        icon: jobIcon,
+        perWorkerOutputs,
+        perWorkerInputs,
+        buildingId: building.id,
+      };
+      state.jobs.push(job);
+      return true;
+    }
+    if (job.name !== jobName) {
+      job.name = jobName;
+      changed = true;
+    }
+    if (job.icon !== jobIcon) {
+      job.icon = jobIcon;
+      changed = true;
+    }
+    if (job.buildingId !== building.id) {
+      job.buildingId = building.id;
+      changed = true;
+    }
+    const existingOutputs = JSON.stringify(job.perWorkerOutputs || {});
+    const nextOutputs = JSON.stringify(perWorkerOutputs);
+    if (existingOutputs !== nextOutputs) {
+      job.perWorkerOutputs = perWorkerOutputs;
+      changed = true;
+    }
+    const existingInputs = JSON.stringify(job.perWorkerInputs || {});
+    const nextInputs = JSON.stringify(perWorkerInputs);
+    if (existingInputs !== nextInputs) {
+      job.perWorkerInputs = perWorkerInputs;
+      changed = true;
+    }
+    return changed;
+  }
+
+  function ensureJobsForAllBuildings() {
+    let changed = false;
+    state.buildings.forEach((building) => {
+      changed = ensureJobEntryFromBuilding(building) || changed;
+    });
+    return changed;
+  }
+
+  function formatJobTooltip(job) {
+    if (!job) {
+      return "";
+    }
+    const outputs = formatRateList(job.perWorkerOutputs || {}, "output");
+    const inputs = formatRateList(job.perWorkerInputs || {}, "input");
+    const parts = [];
+    if (outputs.length > 0) {
+      parts.push(`Per worker: ${outputs.join(", ")}`);
+    }
+    if (inputs.length > 0) {
+      parts.push(`Inputs: ${inputs.join(", ")}`);
+    } else if (outputs.length > 0) {
+      parts.push("Inputs: none");
+    }
+    return parts.join(" • ");
+  }
+
   function createJobResourceEntries(job, lookups) {
     const breakdown = calculateJobResourceBreakdown(job.id, lookups);
     const entries = Array.from(breakdown.entries()).map(([resource, data]) => ({
@@ -1625,7 +1851,8 @@
     nameHeading.textContent = building.name;
     const categoryLabel = document.createElement("span");
     categoryLabel.className = "text-[0.65rem] uppercase tracking-[0.2em] text-slate-500";
-    categoryLabel.textContent = building.category;
+    categoryLabel.textContent =
+      building.category_label || formatResourceKey(building.category);
     headerRow.append(nameHeading, categoryLabel);
 
     const statusContainer = document.createElement("div");
@@ -1656,11 +1883,16 @@
     const actionRow = document.createElement("div");
     actionRow.className = "action-row";
 
+    const buildLabel =
+      typeof building.build_label === "string" && building.build_label
+        ? building.build_label
+        : building.name;
     const buildButton = document.createElement("button");
     buildButton.type = "button";
     buildButton.dataset.action = "build";
     buildButton.dataset.buildingId = building.id;
-    buildButton.textContent = "Build";
+    buildButton.textContent = buildLabel ? `Build ${buildLabel}` : "Build";
+    buildButton.dataset.testid = `build-${building.id}`;
 
     const demolishButton = document.createElement("button");
     demolishButton.type = "button";
@@ -1913,6 +2145,17 @@
     }
     const button = entry.buildButton;
     const isPending = button.dataset.state === "pending";
+    if (building && typeof building.id === "string") {
+      button.dataset.buildingId = building.id;
+      button.dataset.testid = `build-${building.id}`;
+    }
+    const buildLabel =
+      building && typeof building.build_label === "string" && building.build_label
+        ? building.build_label
+        : building && typeof building.name === "string"
+        ? building.name
+        : null;
+    button.textContent = buildLabel ? `Build ${buildLabel}` : "Build";
     const costEntries =
       building && building.cost && typeof building.cost === "object"
         ? Object.entries(building.cost)
@@ -1930,16 +2173,41 @@
       }
     });
 
+    const perWorkerOutputs =
+      building && building.per_worker_output_rate
+        ? building.per_worker_output_rate
+        : {};
+    const perWorkerInputs =
+      building && building.per_worker_input_rate
+        ? building.per_worker_input_rate
+        : {};
+    const outputSummary = formatRateList(perWorkerOutputs, "output");
+    const inputSummary = formatRateList(perWorkerInputs, "input");
+
     const disabled = missingResources.length > 0 && parts.length > 0;
     if (!isPending) {
       syncAriaDisabled(button, disabled);
     }
 
+    const tooltipParts = [];
     if (parts.length > 0) {
-      let tooltip = `Cost: ${parts.join(", ")}`;
+      let costText = `Cost: ${parts.join(", ")}`;
       if (missingResources.length > 0) {
-        tooltip += ` • Missing: ${missingResources.join(", ")}`;
+        costText += ` • Missing: ${missingResources.join(", ")}`;
       }
+      tooltipParts.push(costText);
+    }
+    if (outputSummary.length > 0) {
+      tooltipParts.push(`Per worker: ${outputSummary.join(", ")}`);
+    }
+    if (inputSummary.length > 0) {
+      tooltipParts.push(`Inputs: ${inputSummary.join(", ")}`);
+    } else if (outputSummary.length > 0) {
+      tooltipParts.push("Inputs: none");
+    }
+
+    if (tooltipParts.length > 0) {
+      const tooltip = tooltipParts.join(" • ");
       button.title = tooltip;
       button.dataset.tooltip = tooltip;
     } else {
@@ -2119,7 +2387,8 @@
     entry.iconBadge.textContent = building.icon;
     entry.iconBadge.setAttribute("aria-label", `${building.name} icon`);
     entry.nameHeading.textContent = building.name;
-    entry.categoryLabel.textContent = building.category;
+    entry.categoryLabel.textContent =
+      building.category_label || formatResourceKey(building.category);
 
     entry.builtValue.textContent = formatAmount(building.built || 0);
     entry.storageValue.textContent = formatStorageSummary(building);
@@ -2235,6 +2504,7 @@
       const card = document.createElement("div");
       card.className = "job-card";
       card.dataset.jobId = job.id;
+      card.title = formatJobTooltip(job);
 
       const header = document.createElement("header");
       const titleGroup = document.createElement("div");
@@ -2309,6 +2579,7 @@
     if (!card) {
       return;
     }
+    card.title = formatJobTooltip(job);
     const counter = card.querySelector(`[data-job-counter="${job.id}"]`);
     if (counter) {
       counter.textContent = `${job.assigned}/${job.max}`;
@@ -3176,39 +3447,37 @@
       : [];
 
     let buildingsUpdated = false;
+    let jobMetadataChanged = false;
 
     remoteBuildings.forEach((remote) => {
       const remoteKey = remote.type || remote.id || remote.name;
       if (!remoteKey) {
         return;
       }
-      const match = state.buildings.find((local) => {
+      const matchIndex = state.buildings.findIndex((local) => {
         const localKey = local.type || local.id || local.name;
-        if (!localKey) {
-          return false;
-        }
         return localKey === remoteKey;
       });
-      if (!match) {
+      if (matchIndex === -1) {
+        state.buildings.push(remote);
+        buildingsUpdated = true;
+        if (ensureJobEntryFromBuilding(remote)) {
+          jobMetadataChanged = true;
+        }
         return;
       }
+
+      const match = state.buildings[matchIndex];
       match.inputs = remote.inputs;
       match.outputs = remote.outputs;
+      match.storage = remote.storage;
+      match.cost = remote.cost;
       match.can_produce = remote.can_produce;
       match.reason = remote.reason;
       match.effective_rate = remote.effective_rate;
       match.pending_eta = remote.pending_eta;
       match.last_report = remote.last_report;
       match.cycle_time = remote.cycle_time;
-      if (remote.produces_per_min !== undefined) {
-        const perMinute = Number(remote.produces_per_min);
-        if (Number.isFinite(perMinute)) {
-          match.produces_per_min = perMinute;
-        }
-      }
-      if (typeof remote.produces_unit === "string") {
-        match.produces_unit = remote.produces_unit;
-      }
       if (remote.production_report) {
         match.production_report = remote.production_report;
       } else if (remote.last_report) {
@@ -3221,19 +3490,62 @@
         match.enabled = remote.enabled;
       }
 
+      const assignIfChanged = (key, value, transform) => {
+        if (value === undefined) {
+          return false;
+        }
+        const nextValue = typeof transform === "function" ? transform(value) : value;
+        if (JSON.stringify(match[key]) !== JSON.stringify(nextValue)) {
+          match[key] = nextValue;
+          return true;
+        }
+        return false;
+      };
+
+      let metadataChanged = false;
+      metadataChanged =
+        assignIfChanged("name", remote.name) || metadataChanged;
+      metadataChanged =
+        assignIfChanged("category", remote.category) || metadataChanged;
+      metadataChanged =
+        assignIfChanged("category_label", remote.category_label) || metadataChanged;
+      metadataChanged = assignIfChanged("icon", remote.icon) || metadataChanged;
+      metadataChanged = assignIfChanged("job", remote.job) || metadataChanged;
+      metadataChanged =
+        assignIfChanged("job_name", remote.job_name) || metadataChanged;
+      metadataChanged =
+        assignIfChanged("job_icon", remote.job_icon) || metadataChanged;
+      metadataChanged =
+        assignIfChanged("build_label", remote.build_label) || metadataChanged;
+      metadataChanged =
+        assignIfChanged(
+          "per_worker_output_rate",
+          remote.per_worker_output_rate,
+          (value) => ({ ...value })
+        ) || metadataChanged;
+      metadataChanged =
+        assignIfChanged(
+          "per_worker_input_rate",
+          remote.per_worker_input_rate,
+          (value) => ({ ...value })
+        ) || metadataChanged;
+
       const nextBuilt = Number(remote.built);
-      if (Number.isFinite(nextBuilt)) {
+      if (Number.isFinite(nextBuilt) && match.built !== nextBuilt) {
         match.built = Math.max(0, nextBuilt);
+        buildingsUpdated = true;
       }
 
       const nextCapacity = Number(remote.capacityPerBuilding);
-      if (Number.isFinite(nextCapacity) && nextCapacity > 0) {
+      if (Number.isFinite(nextCapacity) && nextCapacity > 0 && match.capacityPerBuilding !== nextCapacity) {
         match.capacityPerBuilding = nextCapacity;
+        buildingsUpdated = true;
       }
 
       const nextMaxWorkers = Number(remote.max_workers);
-      if (Number.isFinite(nextMaxWorkers) && nextMaxWorkers > 0) {
+      if (Number.isFinite(nextMaxWorkers) && nextMaxWorkers > 0 && match.max_workers !== nextMaxWorkers) {
         match.max_workers = nextMaxWorkers;
+        buildingsUpdated = true;
       }
 
       const candidates = [remote.active, remote.workers, remote.active_workers];
@@ -3255,11 +3567,24 @@
         match.workers = safeActive;
         match.assigned_workers = safeActive;
       }
-      buildingsUpdated = true;
+
+      if (metadataChanged) {
+        buildingsUpdated = true;
+      }
+      if (ensureJobEntryFromBuilding(match)) {
+        jobMetadataChanged = true;
+      }
     });
 
-    if (buildingsUpdated) {
+    if (buildingsUpdated || jobMetadataChanged) {
       renderBuildings();
+      const additionalJobChanges = ensureJobsForAllBuildings();
+      if (additionalJobChanges) {
+        jobMetadataChanged = true;
+      }
+      if (jobMetadataChanged) {
+        renderJobs();
+      }
       updateJobsCount();
       saveState();
       logState();
@@ -3268,6 +3593,10 @@
 
     if (resourcesUpdated) {
       renderBuildings();
+      const additionalJobChanges = ensureJobsForAllBuildings();
+      if (additionalJobChanges) {
+        renderJobs();
+      }
       updateChips();
       saveState();
       logState();
@@ -3338,33 +3667,33 @@
     if (!jobs || typeof jobs !== "object") {
       return false;
     }
-    const entries = Array.isArray(jobs)
-      ? jobs
-      : Object.entries(jobs).map(([id, value]) => ({ id, ...(value || {}) }));
     let changed = false;
-    entries.forEach((entry) => {
-      const jobId =
-        typeof entry.id === "string"
-          ? entry.id
-          : typeof entry.job === "string"
-          ? entry.job
-          : null;
+    let requireRender = false;
+
+    const processEntry = (jobId, info) => {
       if (!jobId) {
         return;
+      }
+      const building = state.buildings.find((candidate) => candidate.job === jobId);
+      if (building) {
+        if (ensureJobEntryFromBuilding(building)) {
+          changed = true;
+          requireRender = true;
+        }
       }
       const job = state.jobs.find((candidate) => candidate.id === jobId);
       if (!job) {
         return;
       }
       const assignedValue = Number(
-        entry.assigned !== undefined ? entry.assigned : entry.workers
+        info.assigned !== undefined ? info.assigned : info.workers
       );
       if (Number.isFinite(assignedValue) && job.assigned !== assignedValue) {
         job.assigned = assignedValue;
         changed = true;
       }
       const capacityValue = Number(
-        entry.capacity !== undefined ? entry.capacity : entry.max
+        info.max !== undefined ? info.max : info.capacity
       );
       if (Number.isFinite(capacityValue) && job.max !== capacityValue) {
         job.max = capacityValue;
@@ -3373,8 +3702,77 @@
       if (Number.isFinite(assignedValue) || Number.isFinite(capacityValue)) {
         updateJobCard(job);
       }
-    });
-    return changed;
+    };
+
+    if (Array.isArray(jobs)) {
+      jobs.forEach((entry) => {
+        const jobId =
+          entry && typeof entry.id === "string"
+            ? entry.id
+            : entry && typeof entry.job === "string"
+            ? entry.job
+            : null;
+        processEntry(jobId, entry || {});
+      });
+    } else {
+      const buildingAssignments =
+        jobs.buildings && typeof jobs.buildings === "object"
+          ? Object.entries(jobs.buildings)
+          : [];
+      buildingAssignments.forEach(([buildingId, value]) => {
+        const info = value || {};
+        const building = state.buildings.find(
+          (candidate) =>
+            candidate.id === buildingId || candidate.type === buildingId
+        );
+        const jobId =
+          building && typeof building.job === "string"
+            ? building.job
+            : typeof info.id === "string"
+            ? info.id
+            : null;
+        if (building && ensureJobEntryFromBuilding(building)) {
+          changed = true;
+          requireRender = true;
+        }
+        processEntry(jobId, info);
+      });
+
+      Object.entries(jobs).forEach(([key, value]) => {
+        if (key === "available_workers" || key === "total_workers" || key === "buildings") {
+          return;
+        }
+        const entry = value || {};
+        const jobId =
+          typeof entry.id === "string"
+            ? entry.id
+            : typeof entry.job === "string"
+            ? entry.job
+            : key;
+        processEntry(jobId, entry);
+      });
+
+      const availableValue = Number(jobs.available_workers);
+      if (Number.isFinite(availableValue)) {
+        state.population.available = Math.max(0, Math.floor(availableValue));
+        changed = true;
+      }
+      const totalValue = Number(jobs.total_workers);
+      if (Number.isFinite(totalValue)) {
+        const totalWorkers = Math.max(0, Math.floor(totalValue));
+        state.population.current = totalWorkers;
+        state.population.total = totalWorkers;
+        if (!Number.isFinite(state.population.capacity) || state.population.capacity < totalWorkers) {
+          state.population.capacity = totalWorkers;
+        }
+        changed = true;
+      }
+    }
+
+    if (requireRender) {
+      renderJobs();
+    }
+    return changed || requireRender;
   }
 
   function applyPublicState(payload) {
@@ -3844,6 +4242,7 @@
   tradeList.addEventListener("input", handleTradeInputs);
 
   renderBuildings();
+  ensureJobsForAllBuildings();
   renderJobs();
   renderTrade();
   attachAccordion();

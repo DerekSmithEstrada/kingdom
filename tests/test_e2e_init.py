@@ -61,7 +61,32 @@ def test_forced_init_and_first_production_cycle(client):
         b for b in buildings if b["type"] == config.WOODCUTTER_CAMP
     )
     assert woodcutter.get("active_workers", 0) == 0
-    assert woodcutter.get("cost", {}).get("STICKS") == pytest.approx(30)
+    assert woodcutter.get("cost", {}).get("WOOD") == pytest.approx(10)
+    assert woodcutter.get("cost", {}).get("GOLD") == pytest.approx(5)
+    assert woodcutter.get("per_worker_input_rate", {}).get("STICKS") == pytest.approx(
+        0.04
+    )
+    assert woodcutter.get("per_worker_output_rate", {}).get("WOOD") == pytest.approx(
+        0.01
+    )
+
+    stick_tent = next(
+        b for b in buildings if b["type"] == config.STICK_GATHERING_TENT
+    )
+    assert stick_tent.get("built") == 0
+    assert stick_tent.get("cost", {}).get("GOLD") == pytest.approx(1)
+    assert stick_tent.get("per_worker_output_rate", {}).get("STICKS") == pytest.approx(
+        0.01
+    )
+
+    stone_tent = next(
+        b for b in buildings if b["type"] == config.STONE_GATHERING_TENT
+    )
+    assert stone_tent.get("built") == 0
+    assert stone_tent.get("cost", {}).get("GOLD") == pytest.approx(2)
+    assert stone_tent.get("per_worker_output_rate", {}).get("STONE") == pytest.approx(
+        0.01
+    )
 
     state_response = client.get("/api/state")
     assert state_response.status_code == 200

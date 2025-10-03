@@ -68,8 +68,7 @@ def test_worker_cap_scales_with_camps():
     assert state.workers_assigned_woodcutter == 2
     assert state.max_workers_woodcutter == 2
 
-    state.inventory.set_amount(Resource.STICKS, 100)
-    state.inventory.set_amount(Resource.STONE, 100)
+    state.inventory.set_amount(Resource.WOOD, 100)
     state.inventory.set_amount(Resource.GOLD, 100)
     state.recompute_wood_caps()
     response = ui_bridge.build_building(config.WOODCUTTER_CAMP)
@@ -117,8 +116,7 @@ def test_demolition_adjusts_capacity_and_workers():
     assert building is not None
 
     state.assign_workers_to_woodcutter(0)
-    state.inventory.set_amount(Resource.STICKS, 100)
-    state.inventory.set_amount(Resource.STONE, 100)
+    state.inventory.set_amount(Resource.WOOD, 100)
     state.inventory.set_amount(Resource.GOLD, 100)
     state.recompute_wood_caps()
     ui_bridge.build_building(config.WOODCUTTER_CAMP)
@@ -141,29 +139,25 @@ def test_build_requires_resources():
     state = get_game_state()
     building = state.get_building_by_type(config.WOODCUTTER_CAMP)
     assert building is not None
-    state.inventory.set_amount(Resource.STICKS, 0)
-    state.inventory.set_amount(Resource.STONE, 0)
+    state.inventory.set_amount(Resource.WOOD, 0)
     state.inventory.set_amount(Resource.GOLD, 0)
     state.recompute_wood_caps()
 
     error = ui_bridge.build_building(config.WOODCUTTER_CAMP)
     assert error["ok"] is False
     assert error["error"] == "INSUFFICIENT_RESOURCES"
-    assert error.get("requires", {}).get("sticks") == pytest.approx(30)
-    assert error.get("requires", {}).get("stone") == pytest.approx(20)
-    assert error.get("requires", {}).get("gold") == pytest.approx(10)
+    assert error.get("requires", {}).get("wood") == pytest.approx(10)
+    assert error.get("requires", {}).get("gold") == pytest.approx(5)
 
-    state.inventory.set_amount(Resource.STICKS, 40)
-    state.inventory.set_amount(Resource.STONE, 40)
-    state.inventory.set_amount(Resource.GOLD, 25)
+    state.inventory.set_amount(Resource.WOOD, 20)
+    state.inventory.set_amount(Resource.GOLD, 15)
     state.recompute_wood_caps()
     success = ui_bridge.build_building(config.WOODCUTTER_CAMP)
     assert success["ok"] is True
     state.recompute_wood_caps()
     snapshot = state.basic_state_snapshot()
-    assert snapshot["items"]["sticks"] == pytest.approx(10.0)
-    assert snapshot["items"]["stone"] == pytest.approx(20.0)
-    assert snapshot["items"]["gold"] == pytest.approx(15.0)
+    assert snapshot["items"]["wood"] == pytest.approx(10.0)
+    assert snapshot["items"]["gold"] == pytest.approx(10.0)
     assert snapshot["wood_state"]["woodcutter_camps_built"] == 2
     assert snapshot["wood_state"]["wood_max_capacity"] == pytest.approx(60.0)
 
@@ -175,3 +169,33 @@ def test_snapshot_includes_production_per_minute():
     snapshot = state.snapshot_building(config.WOODCUTTER_CAMP)
     assert snapshot["produces_per_min"] == pytest.approx(1.2)
     assert snapshot["produces_unit"] == "wood/min"
+
+
+def test_stick_tent_produces_sticks():
+    state = get_game_state()
+    state.worker_pool.set_total_workers(10)
+    state.inventory.set_amount(Resource.GOLD, 10)
+    response = ui_bridge.build_building(config.STICK_GATHERING_TENT)
+    assert response["ok"] is True
+    tent = state.get_building_by_type(config.STICK_GATHERING_TENT)
+    assert tent is not None
+    state.worker_pool.set_assignment(tent, 1)
+    state.advance_time(10.0)
+    assert state.inventory.get_amount(Resource.STICKS) == pytest.approx(
+        0.1, rel=1e-9, abs=1e-9
+    )
+
+
+def test_stone_tent_produces_stone():
+    state = get_game_state()
+    state.worker_pool.set_total_workers(10)
+    state.inventory.set_amount(Resource.GOLD, 10)
+    response = ui_bridge.build_building(config.STONE_GATHERING_TENT)
+    assert response["ok"] is True
+    tent = state.get_building_by_type(config.STONE_GATHERING_TENT)
+    assert tent is not None
+    state.worker_pool.set_assignment(tent, 1)
+    state.advance_time(10.0)
+    assert state.inventory.get_amount(Resource.STONE) == pytest.approx(
+        0.1, rel=1e-9, abs=1e-9
+    )

@@ -21,6 +21,13 @@ class Building:
     assigned_workers: int = 0
     cycle_progress: float = 0.0
     status: str = "pausado"
+    category: str = "general"
+    category_label: Optional[str] = None
+    icon: str = "🏗️"
+    job: Optional[str] = None
+    job_name: Optional[str] = None
+    job_icon: Optional[str] = None
+    build_label: Optional[str] = None
     id: str = field(init=False)
     production_report: Dict[str, object] = field(default_factory=dict)
 
@@ -29,6 +36,11 @@ class Building:
         self._maintenance_notified = False
         self._last_effective_rate = 0.0
         self.production_report = self._new_report()
+        self.category = (self.category or "general").strip().lower() or "general"
+        if not self.category_label:
+            self.category_label = self.category.title()
+        if not self.build_label:
+            self.build_label = self.name
 
     # ------------------------------------------------------------------
     @property
@@ -505,7 +517,7 @@ class Building:
 
     # ------------------------------------------------------------------
     def to_snapshot(self) -> Dict[str, object]:
-        return {
+        snapshot = {
             "id": self.id,
             "type": self.type_key,
             "name": self.name,
@@ -529,7 +541,26 @@ class Building:
                 res.value: amt
                 for res, amt in config.BUILD_COSTS.get(self.type_key, {}).items()
             },
+            "category": self.category,
+            "category_label": self.category_label,
+            "icon": self.icon,
+            "job": self.job,
+            "job_name": self.job_name,
+            "job_icon": self.job_icon,
+            "build_label": self.build_label,
         }
+
+        if self.per_worker_output_rate:
+            snapshot["per_worker_output_rate"] = {
+                resource.value: amount
+                for resource, amount in self.per_worker_output_rate.items()
+            }
+        if self.per_worker_input_rate:
+            snapshot["per_worker_input_rate"] = {
+                resource.value: amount
+                for resource, amount in self.per_worker_input_rate.items()
+            }
+        return snapshot
 
     def to_dict(self) -> Dict[str, object]:
         return {
@@ -550,4 +581,16 @@ class Building:
 def build_from_config(type_key: str) -> Building:
     recipe = config.BUILDING_RECIPES[type_key]
     name = config.BUILDING_NAMES.get(type_key, type_key.title())
-    return Building(type_key=type_key, recipe=recipe, name=name)
+    metadata = config.get_building_metadata(type_key)
+    return Building(
+        type_key=type_key,
+        recipe=recipe,
+        name=name,
+        category=metadata.category,
+        category_label=metadata.category_label,
+        icon=metadata.icon,
+        job=metadata.job,
+        job_name=metadata.job_name,
+        job_icon=metadata.job_icon,
+        build_label=metadata.build_label,
+    )
