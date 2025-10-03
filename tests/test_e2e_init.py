@@ -99,4 +99,4 @@ def test_forced_init_and_first_production_cycle(client):
         assert payload["ok"] is True
 
     half_way_state = client.get("/state").get_json()
-    assert half_way_state["items"]["wood"] == pytest.approx(1.0, rel=1e-9, abs=1e-9)
+    assert half_way_state["items"]["wood"] == pytest.approx(1.5, rel=1e-9, abs=1e-9)

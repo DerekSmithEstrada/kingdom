@@ -32,6 +32,14 @@ def save_game(path: str) -> None:
         },
         "buildings": [building.to_dict() for building in game_state.buildings.values()],
         "trade": game_state.trade_manager.bulk_export(),
+        "wood_state": {
+            "wood": game_state.wood,
+            "woodcutter_camps_built": game_state.woodcutter_camps_built,
+            "workers_assigned_woodcutter": game_state.workers_assigned_woodcutter,
+            "wood_max_capacity": game_state.wood_max_capacity,
+            "wood_production_per_second": game_state.wood_production_per_second,
+            "max_workers_woodcutter": game_state.max_workers_woodcutter,
+        },
     }
     with open(Path(path), "w", encoding="utf-8") as fh:
         json.dump(data, fh, ensure_ascii=False, indent=2)
@@ -111,3 +119,4 @@ def load_game(path: str) -> None:
 
     trade_data = data.get("trade", {})
     game_state.trade_manager.bulk_load(trade_data)
+    game_state.recompute_wood_caps()
