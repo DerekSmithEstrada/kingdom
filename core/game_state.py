@@ -29,6 +29,10 @@ class InsufficientResourcesError(Exception):
         super().__init__("INSUFFICIENT_RESOURCES")
 
 
+class NothingToDemolishError(Exception):
+    """Raised when attempting to demolish an unbuilt structure."""
+
+
 class GameState:
     """Central storage for all mutable game data."""
 
@@ -86,11 +90,28 @@ class GameState:
             if capacity is not None:
                 self.inventory.set_capacity(resource, float(capacity))
 
+    @staticmethod
+    def _normalise_built_value(value: object, *, default: int = 0) -> int:
+        if value is None:
+            return max(0, int(default))
+        if isinstance(value, bool):
+            return 1 if value else 0
+        if isinstance(value, (int, float)):
+            return max(0, int(value))
+        if isinstance(value, str):
+            try:
+                numeric = float(value)
+            except ValueError:
+                return 1 if value.strip() else max(0, int(default))
+            return max(0, int(numeric))
+        return 1 if bool(value) else 0
+
     def _initialise_starting_buildings(self) -> None:
         for entry in config.STARTING_BUILDINGS:
             type_key: Optional[str] = None
             workers = 0
             enabled = True
+            built_value: object = None
 
             if isinstance(entry, Mapping):
                 raw_type = entry.get("type")
@@ -103,6 +124,7 @@ class GameState:
                         workers = 0
                 if "enabled" in entry:
                     enabled = bool(entry.get("enabled", True))
+                built_value = entry.get("built") if "built" in entry else None
             elif isinstance(entry, (tuple, list)) and entry:
                 raw_type = entry[0]
                 if isinstance(raw_type, str):
@@ -112,16 +134,24 @@ class GameState:
                         workers = int(entry[1])
                     except (TypeError, ValueError):
                         workers = 0
+                if len(entry) > 2:
+                    built_value = entry[2]
             elif isinstance(entry, str):
                 type_key = entry
+                built_value = None
 
             if not type_key or type_key not in config.BUILDING_RECIPES:
                 continue
 
             building = build_from_config(type_key)
             building.enabled = enabled
-            if isinstance(entry, Mapping) and "built" in entry:
-                building.built = bool(entry.get("built", True))
+            built_count = self._normalise_built_value(
+                built_value,
+                default=1 if enabled else 0,
+            )
+            building.built = built_count
+            if built_count <= 0:
+                building.enabled = False
             assigned = max(0, min(int(workers), building.max_workers))
             building.assigned_workers = assigned
             self.buildings[building.id] = building
@@ -164,7 +194,7 @@ class GameState:
                 wood_amount = self.inventory.get_amount(Resource.WOOD)
                 woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
                 workers = woodcutter.assigned_workers if woodcutter else 0
-                built = int(bool(woodcutter.built)) if woodcutter else 0
+                built = woodcutter.built_count if woodcutter else 0
                 logger.debug(
                     "Tick %s summary: wood=%.1f built=%s workers=%s",
                     self._tick_count,
@@ -181,10 +211,10 @@ class GameState:
         if type_key not in config.BUILDING_RECIPES:
             raise ValueError(f"Tipo de edificio desconocido: {type_key}")
 
+        canonical_id = config.resolve_building_public_id(type_key)
+
         with self._lock:
-            existing = self.buildings.get(type_key)
-            if existing is not None and bool(existing.built):
-                return existing
+            building = self.buildings.get(canonical_id)
 
             cost = config.BUILD_COSTS.get(type_key, {})
             if cost and not self.inventory.has(cost):
@@ -192,16 +222,22 @@ class GameState:
             if cost and not self.inventory.consume(cost):
                 raise InsufficientResourcesError(cost)
 
-            building = existing
             if building is None:
                 building = build_from_config(type_key)
-                building.built = int(bool(building.built)) or 1
+                building.built = 0
+                building.assigned_workers = max(0, int(building.assigned_workers))
                 self.buildings[building.id] = building
-            else:
-                building.built = int(bool(building.built)) or 1
-                building.enabled = True
+                self.last_production_reports[building.id] = building.production_report
 
             self.worker_pool.register_building(building)
+
+            building.built = building.built_count + 1
+            building.enabled = True
+
+            max_workers = building.max_workers
+            if building.assigned_workers > max_workers:
+                building.assigned_workers = max_workers
+
             self._state_version += 1
 
         self.add_notification(f"Construido {building.name}")
@@ -209,17 +245,34 @@ class GameState:
 
     def demolish_building(self, building_id: str, refund_rate: float = 0.5) -> Building:
         canonical_id = self._canonical_building_id(building_id)
-        building = self.buildings.pop(canonical_id, None)
-        if building is None:
-            raise ValueError("Edificio inexistente")
-        refund = {
-            resource: amount * refund_rate
-            for resource, amount in config.BUILD_COSTS.get(building.type_key, {}).items()
-        }
-        if refund:
-            self.inventory.add(refund)
-        self.worker_pool.unregister_building(canonical_id)
-        building.assigned_workers = 0
+
+        with self._lock:
+            building = self.buildings.get(canonical_id)
+            if building is None:
+                raise ValueError("Edificio inexistente")
+
+            built_count = building.built_count
+            if built_count <= 0:
+                raise NothingToDemolishError("NOTHING_TO_DEMOLISH")
+
+            building.built = built_count - 1
+            if building.built <= 0:
+                building.enabled = False
+
+            max_workers = building.max_workers
+            if building.assigned_workers > max_workers:
+                building.assigned_workers = max_workers
+
+            refund = {
+                resource: amount * refund_rate
+                for resource, amount in config.BUILD_COSTS.get(building.type_key, {}).items()
+            }
+            if refund:
+                self.inventory.add(refund)
+
+            self.worker_pool.register_building(building)
+            self._state_version += 1
+
         self.add_notification(f"{building.name} demolido")
         return building
 
@@ -320,18 +373,16 @@ class GameState:
             if woodcutter is None:
                 built = 0
                 workers = 0
-                capacity = int(
-                    config.BUILDING_RECIPES[config.WOODCUTTER_CAMP].max_workers
-                )
+                total_capacity = 0
             else:
-                built = int(bool(woodcutter.built))
-                workers = int(woodcutter.assigned_workers)
-                capacity = int(woodcutter.max_workers)
+                built = woodcutter.built_count
+                workers = max(0, int(woodcutter.assigned_workers))
+                total_capacity = int(woodcutter.max_workers)
 
-        active_workers = workers if built > 0 else 0
+        active_workers = min(workers, built) if built > 0 else 0
         jobs_payload = {
-            "assigned": active_workers,
-            "capacity": capacity,
+            "assigned": workers,
+            "capacity": total_capacity,
         }
 
         snapshot = {
@@ -340,7 +391,7 @@ class GameState:
                 config.WOODCUTTER_CAMP: {
                     "built": built,
                     "workers": workers,
-                    "capacity": capacity,
+                    "capacity": total_capacity,
                     "active": active_workers,
                 }
             },

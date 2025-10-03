@@ -80,6 +80,18 @@ def load_game(path: str) -> None:
             except ValueError:
                 building.id = config.resolve_building_public_id(building.type_key)
         building.enabled = bool(entry.get("enabled", True))
+        raw_built = entry.get("built")
+        if raw_built is None:
+            built_count = 1 if building.enabled else 0
+        else:
+            try:
+                built_count = int(float(raw_built))
+            except (TypeError, ValueError):
+                built_count = 0
+            built_count = max(0, built_count)
+        building.built = built_count
+        if built_count <= 0:
+            building.enabled = False
         building.cycle_progress = float(entry.get("cycle_progress", 0.0))
         assigned = int(entry.get("assigned_workers", 0))
         building.assigned_workers = max(0, min(assigned, building.max_workers))

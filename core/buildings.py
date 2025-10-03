@@ -16,7 +16,7 @@ class Building:
     type_key: str
     recipe: config.BuildingRecipe
     name: str
-    built: bool = True
+    built: int = 0
     enabled: bool = True
     assigned_workers: int = 0
     cycle_progress: float = 0.0
@@ -37,6 +37,23 @@ class Building:
         if built_multiplier <= 0:
             return 0
         return int(self.recipe.max_workers * built_multiplier)
+
+    @property
+    def capacity_per_building(self) -> int:
+        return int(self.recipe.max_workers)
+
+    @property
+    def built_count(self) -> int:
+        multiplier = self._built_multiplier()
+        return int(multiplier) if multiplier > 0 else 0
+
+    @property
+    def active_instances(self) -> int:
+        built = self.built_count
+        if built <= 0:
+            return 0
+        workers = max(0, int(self.assigned_workers))
+        return min(workers, built)
 
     @property
     def inputs_per_cycle(self) -> Mapping[Resource, float]:
@@ -415,10 +432,12 @@ class Building:
             "id": self.id,
             "type": self.type_key,
             "name": self.name,
-            "built": self.built,
+            "built": self.built_count,
+            "active": self.active_instances,
             "active_workers": self.assigned_workers,
             "workers": self.assigned_workers,
             "max_workers": self.max_workers,
+            "capacityPerBuilding": self.capacity_per_building,
             "inputs": {res.value: amt for res, amt in self.inputs_per_cycle.items()},
             "outputs": {res.value: amt for res, amt in self.outputs_per_cycle.items()},
             "cycle_time": self.cycle_time_sec,
@@ -435,6 +454,7 @@ class Building:
             "id": self.id,
             "type": self.type_key,
             "enabled": self.enabled,
+            "built": self.built_count,
             "assigned_workers": self.assigned_workers,
             "cycle_progress": self.cycle_progress,
         }

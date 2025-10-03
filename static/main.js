@@ -1581,13 +1581,7 @@
     workerFeedback.hidden = true;
     workerGroup.appendChild(workerFeedback);
 
-    const assignButton = document.createElement("button");
-    assignButton.type = "button";
-    assignButton.dataset.action = "assign";
-    assignButton.dataset.buildingId = building.id;
-    assignButton.textContent = "Assign";
-
-    actionRow.append(buildButton, demolishButton, workerGroup, assignButton);
+    actionRow.append(buildButton, demolishButton, workerGroup);
 
     meta.append(headerRow, statusContainer, statRow, bar, ioSection, actionRow);
     article.append(iconBadge, meta);
@@ -1605,7 +1599,7 @@
       activeValue: activeStat.value,
       capacityValue: capacityStat.value,
       workerInput,
-      assignButton,
+      demolishButton,
       incrementButton,
       decrementButton,
       consumesList: consumes.list,
@@ -1795,10 +1789,7 @@
     let disabled = false;
     let tooltip = "";
 
-    const builtValue = building ? Number(building.built) : 0;
-    const builtCount = Number.isFinite(builtValue) ? builtValue : 0;
-
-    if (isWoodcutterBuilding(building) && builtCount <= 0) {
+    if (isWoodcutterBuilding(building)) {
       const availableWood = getResourceStock("wood");
       if (!Number.isFinite(availableWood) || availableWood + 1e-9 < 1) {
         disabled = true;
@@ -1806,12 +1797,29 @@
       }
     }
 
-    if (builtCount >= 1) {
-      disabled = true;
-      if (!tooltip) {
-        tooltip = "Already built";
-      }
+    if (!isPending) {
+      syncAriaDisabled(button, disabled);
     }
+
+    if (tooltip) {
+      button.title = tooltip;
+      button.dataset.tooltip = tooltip;
+    } else {
+      button.removeAttribute("title");
+      button.removeAttribute("data-tooltip");
+    }
+  }
+
+  function updateDemolishButton(entry, building) {
+    if (!entry || !entry.demolishButton) {
+      return;
+    }
+    const button = entry.demolishButton;
+    const isPending = button.dataset.state === "pending";
+    const builtValue = building ? Number(building.built) : 0;
+    const builtCount = Number.isFinite(builtValue) ? builtValue : 0;
+    const disabled = builtCount <= 0;
+    const tooltip = disabled ? "Nothing to demolish" : "";
 
     if (!isPending) {
       syncAriaDisabled(button, disabled);
@@ -1914,18 +1922,20 @@
 
     entry.decrementButton.dataset.buildingId = building.id;
     entry.incrementButton.dataset.buildingId = building.id;
-    entry.assignButton.dataset.buildingId = building.id;
 
     const hasServerId =
       typeof building.id === "string" && building.id.trim().length > 0;
     const isPending = pendingWorkerRequests.has(String(building.id));
     const disableState = getWorkerDisableState(building);
-    const assignDisabled = !hasServerId || isPending || disableState.disabled;
+    const incrementDisabled =
+      !hasServerId ||
+      isPending ||
+      disableState.disabled ||
+      (Number.isFinite(capacity) && activeWorkers >= capacity);
     const decrementDisabled = !hasServerId || isPending || activeWorkers <= 0;
 
     syncAriaDisabled(entry.decrementButton, decrementDisabled);
-    syncAriaDisabled(entry.assignButton, assignDisabled);
-    syncAriaDisabled(entry.incrementButton, assignDisabled);
+    syncAriaDisabled(entry.incrementButton, incrementDisabled);
 
     entry.workerInput.disabled = !hasServerId || isPending;
     entry.workerInput.setAttribute(
@@ -1933,22 +1943,34 @@
       entry.workerInput.disabled ? "true" : "false"
     );
 
+    let incrementTooltip = "";
+    let decrementTooltip = "";
+
     if (isPending) {
-      entry.assignButton.title = "Procesando asignación…";
-      entry.incrementButton.title = "Procesando asignación…";
-      entry.decrementButton.title = "Procesando asignación…";
+      incrementTooltip = "Procesando asignación…";
+      decrementTooltip = "Procesando asignación…";
     } else if (!hasServerId) {
       const syncing = "Sincronizando con el servidor…";
-      entry.assignButton.title = syncing;
-      entry.incrementButton.title = syncing;
-      entry.decrementButton.title = syncing;
+      incrementTooltip = syncing;
+      decrementTooltip = syncing;
     } else if (disableState.disabled) {
-      entry.assignButton.title = disableState.tooltip;
-      entry.incrementButton.title = disableState.tooltip;
-      entry.decrementButton.removeAttribute("title");
+      incrementTooltip = disableState.tooltip;
+      decrementTooltip = "";
     } else {
-      entry.assignButton.removeAttribute("title");
+      if (Number.isFinite(capacity) && activeWorkers >= capacity && capacity > 0) {
+        incrementTooltip = "Capacidad máxima alcanzada.";
+      }
+    }
+
+    if (incrementTooltip) {
+      entry.incrementButton.title = incrementTooltip;
+    } else {
       entry.incrementButton.removeAttribute("title");
+    }
+
+    if (decrementTooltip) {
+      entry.decrementButton.title = decrementTooltip;
+    } else {
       entry.decrementButton.removeAttribute("title");
     }
   }
@@ -1970,6 +1992,7 @@
     updateBuildingIo(entry, building);
     updateBuildingProductionSummary(entry, building);
     updateBuildButton(entry, building);
+    updateDemolishButton(entry, building);
   }
 
   function renderBuildings() {
@@ -2473,20 +2496,6 @@
     updateChips();
   }
 
-  function adjustBuildingCount(buildingId, delta) {
-    const building = findBuildingById(buildingId);
-    if (!building) return;
-    const nextBuilt = Math.max(0, building.built + delta);
-    building.built = nextBuilt;
-    const capacity = getCapacity(building);
-    if (building.active > capacity) {
-      building.active = capacity;
-    }
-    saveState();
-    renderBuildings();
-    updateJobsCount();
-  }
-
   async function buildStructure(buildingId) {
     const building = findBuildingById(buildingId);
     const entry = buildingElementMap.get(resolveBuildingElementKey(buildingId));
@@ -2503,6 +2512,7 @@
       if (entry && entry.buildButton) {
         delete entry.buildButton.dataset.state;
         updateBuildButton(entry, building || findBuildingById(buildingId));
+        updateDemolishButton(entry, building || findBuildingById(buildingId));
       }
       return false;
     }
@@ -2532,7 +2542,9 @@
       }
       if (entry && entry.buildButton) {
         delete entry.buildButton.dataset.state;
-        updateBuildButton(entry, building || findBuildingById(buildingId));
+        const latest = building || findBuildingById(buildingId);
+        updateBuildButton(entry, latest);
+        updateDemolishButton(entry, latest);
       }
       return false;
     }
@@ -2548,8 +2560,82 @@
 
     if (entry && entry.buildButton) {
       delete entry.buildButton.dataset.state;
-      const latest = findBuildingById(buildingId);
-      updateBuildButton(entry, latest || building);
+      const latest = findBuildingById(buildingId) || building;
+      updateBuildButton(entry, latest);
+      updateDemolishButton(entry, latest);
+    }
+
+    return true;
+  }
+
+  async function demolishStructure(buildingId) {
+    const building = findBuildingById(buildingId);
+    const entry = buildingElementMap.get(resolveBuildingElementKey(buildingId));
+    if (entry && entry.demolishButton) {
+      entry.demolishButton.dataset.state = "pending";
+      syncAriaDisabled(entry.demolishButton, true);
+    }
+    if (entry) {
+      setWorkerFeedback(entry, null);
+    }
+
+    const endpoint = `/api/buildings/${encodeURIComponent(buildingId)}/demolish`;
+    if (typeof fetch !== "function") {
+      if (entry && entry.demolishButton) {
+        delete entry.demolishButton.dataset.state;
+        const latest = building || findBuildingById(buildingId);
+        updateDemolishButton(entry, latest);
+        updateBuildButton(entry, latest);
+      }
+      return false;
+    }
+
+    let payload = null;
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      payload = response ? await response.json() : null;
+    } catch (error) {
+      payload = null;
+    }
+
+    if (!payload || payload.ok !== true) {
+      if (entry) {
+        if (payload && payload.error === "NOTHING_TO_DEMOLISH") {
+          setWorkerFeedback(entry, "Nothing to demolish", { variant: "warning" });
+        } else {
+          const message =
+            payload && typeof payload.error_message === "string"
+              ? payload.error_message
+              : "Unable to demolish";
+          setWorkerFeedback(entry, message, { variant: "error" });
+        }
+      }
+      if (entry && entry.demolishButton) {
+        delete entry.demolishButton.dataset.state;
+        const latest = building || findBuildingById(buildingId);
+        updateDemolishButton(entry, latest);
+        updateBuildButton(entry, latest);
+      }
+      return false;
+    }
+
+    if (entry) {
+      setWorkerFeedback(entry, null);
+    }
+
+    if (payload.state) {
+      applyPublicState(payload.state);
+    }
+    updateBuildingsFromPayload(payload);
+
+    if (entry && entry.demolishButton) {
+      delete entry.demolishButton.dataset.state;
+      const latest = findBuildingById(buildingId) || building;
+      updateDemolishButton(entry, latest);
+      updateBuildButton(entry, latest);
     }
 
     return true;
@@ -2716,11 +2802,8 @@
       await buildStructure(buildingId);
       return;
     } else if (action === "demolish") {
-      adjustBuildingCount(buildingId, -1);
-    } else if (action === "assign") {
-      const input = document.querySelector(`[data-building-input="${buildingId}"]`);
-      const desired = input ? Number(input.value) : 0;
-      await assignBuildingWorkers(buildingId, desired);
+      event.preventDefault();
+      await demolishStructure(buildingId);
     } else if (action === "worker-increment" || action === "worker-decrement") {
       const building = findBuildingById(buildingId);
       if (!building) return;
