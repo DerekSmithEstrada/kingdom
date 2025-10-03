@@ -63,6 +63,54 @@ def api_tick():
     return jsonify(response)
 
 
+@app.post("/season/start")
+def api_season_start():
+    """Trigger a season start event at a specific timestamp."""
+
+    payload = request.get_json(silent=True) or {}
+    season = payload.get("season")
+    at = payload.get("at")
+    if season is None or at is None:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "invalid_payload",
+                    "error_message": "Missing 'season' or 'at' in payload",
+                }
+            ),
+            400,
+        )
+    try:
+        at_value = float(at)
+    except (TypeError, ValueError):
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "invalid_timestamp",
+                    "error_message": "Timestamp 'at' must be a number",
+                }
+            ),
+            400,
+        )
+
+    try:
+        response = ui_bridge.season_start(season, at_value)
+    except ValueError as exc:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "invalid_season",
+                    "error_message": str(exc),
+                }
+            ),
+            400,
+        )
+    return jsonify(response)
+
+
 @app.post("/api/buildings/<string:building_id>/build")
 def api_build_building(building_id: str):
     """Construct a new instance of the requested building."""

@@ -14,6 +14,7 @@ from .buildings import Building, build_from_config
 from .inventory import Inventory
 from .jobs import WorkerPool
 from .resources import ALL_RESOURCES, Resource
+from .seasons import SEASON_GRANTS
 from .timeclock import SeasonClock
 from .trade import TradeManager
 
@@ -68,19 +69,36 @@ class GameState:
             self._tick_count = 0
             self._state_version = 0
             self.notifications.clear()
+
+            now = 0.0
+            self.time = {"server_now": float(now), "last_tick": float(now)}
+            self.resources = {"gold": 0.0}
+
             self.season_clock = SeasonClock(season_modifiers=config.SEASON_MODIFIERS)
-            self._sync_season_state()
+            season_name = self.season_clock.get_current_season().lower()
+            self.season = {"current": season_name, "last_change_at": float(now)}
+
+            self.population_capacity = int(config.POPULATION_CAPACITY)
+            self.population = {
+                "total": 0,
+                "cap": self.population_capacity,
+                "villagers": [],
+            }
+            self._next_villager_id = 1
+
             self.inventory = Inventory()
             self.inventory.set_notifier(self.add_notification)
-            self.population_current = int(config.POPULATION_INITIAL)
-            self.population_capacity = int(config.POPULATION_CAPACITY)
-            self.worker_pool = WorkerPool(self.population_current)
+
+            self.population_current = 0
+            self.worker_pool = WorkerPool(0)
             self.buildings: Dict[str, Building] = {}
             Building.reset_ids()
             self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
             self._initialise_inventory()
             self.last_production_reports = {}
             self._active_missing_notifications = {}
+
+            self._grant_new_villagers(int(config.POPULATION_INITIAL))
             self._initialise_starting_buildings()
             self.wood = 0.0
             self.woodcutter_camps_built = 0
@@ -89,6 +107,7 @@ class GameState:
             self.wood_max_capacity = 0.0
             self.wood_production_per_second = 0.0
             self.recompute_wood_caps()
+            self._sync_season_state()
 
     # ------------------------------------------------------------------
     def _initialise_inventory(self) -> None:
@@ -181,7 +200,84 @@ class GameState:
         return list(self.notifications)
 
     # ------------------------------------------------------------------
-    def tick(self, dt: float) -> None:
+    def tick(self, t_now: float) -> None:
+        with self._lock:
+            t_now = float(t_now)
+            last_tick = float(self.time.get("last_tick", 0.0))
+            if t_now < last_tick:
+                t_now = last_tick
+            dt = max(0.0, t_now - last_tick)
+
+            self.time["server_now"] = max(self.time.get("server_now", t_now), t_now)
+
+            income = self.population_total() * 0.01 * dt
+            if income != 0:
+                self.resources["gold"] += income
+                self.inventory.add({Resource.GOLD: income})
+
+            self._process_tick(dt)
+
+            self.time["last_tick"] = t_now
+            self.time["server_now"] = max(self.time.get("server_now", t_now), t_now)
+
+    def advance_time(self, dt: float) -> None:
+        dt_seconds = max(0.0, float(dt))
+        with self._lock:
+            base_time = float(self.time.get("last_tick", 0.0))
+        self.tick(base_time + dt_seconds)
+
+    def population_total(self) -> int:
+        with self._lock:
+            villagers = self.population.get("villagers", [])
+            return len(villagers)
+
+    def _update_population_totals_locked(self) -> None:
+        total = len(self.population.get("villagers", []))
+        cap = int(self.population.get("cap", self.population_capacity))
+        self.population["total"] = total
+        self.population["cap"] = cap
+        self.population_current = total
+        self.population_capacity = cap
+        if hasattr(self, "worker_pool") and self.worker_pool is not None:
+            self.worker_pool.set_total_workers(total)
+
+    def _grant_new_villagers(self, amount: int) -> int:
+        with self._lock:
+            requested = max(0, int(amount))
+            cap = int(self.population.get("cap", self.population_capacity))
+            free_slots = max(0, cap - len(self.population.get("villagers", [])))
+            to_add = max(0, min(requested, free_slots))
+            for _ in range(to_add):
+                villager = {
+                    "id": self._next_villager_id,
+                    "employed": False,
+                    "job_id": None,
+                }
+                self.population["villagers"].append(villager)
+                self._next_villager_id += 1
+            self._update_population_totals_locked()
+            return to_add
+
+    def on_season_start(self, new_season: str, at: float) -> None:
+        normalized = str(new_season or "").strip().lower()
+        if normalized not in SEASON_GRANTS:
+            raise ValueError(f"Unknown season: {new_season}")
+        timestamp = float(at)
+        with self._lock:
+            current = self.season.get("current")
+            last_change = float(self.season.get("last_change_at", timestamp))
+            if current == normalized and last_change == timestamp:
+                return
+
+            self.season["current"] = normalized
+            self.season["last_change_at"] = timestamp
+            self.time["server_now"] = max(self.time.get("server_now", timestamp), timestamp)
+
+            added = self._grant_new_villagers(SEASON_GRANTS[normalized])
+            if added > 0:
+                self._state_version += 1
+
+    def _process_tick(self, dt: float) -> None:
         seconds = max(0.0, float(dt))
         self.season_clock.update(seconds)
         self._sync_season_state()
@@ -507,7 +603,7 @@ class GameState:
     def game_tick(self, dt_seconds: float) -> None:
         """Alias for :meth:`tick` matching the wood subsystem naming."""
 
-        self.tick(dt_seconds)
+        self.advance_time(dt_seconds)
 
     def assign_workers_to_woodcutter(self, number: int) -> int:
         """Assign workers to the woodcutter ensuring clamps are respected."""
@@ -679,7 +775,18 @@ class GameState:
     def snapshot_state(self) -> Dict[str, object]:
         with self._lock:
             version = int(self._state_version)
-        return {
+            time_state = {
+                "server_now": float(self.time.get("server_now", 0.0)),
+                "last_tick": float(self.time.get("last_tick", 0.0)),
+            }
+            villagers = [dict(v) for v in self.population.get("villagers", [])]
+            population_detail = {
+                "total": len(villagers),
+                "cap": int(self.population.get("cap", self.population_capacity)),
+                "villagers": villagers,
+            }
+            resources_passive = {"gold": float(self.resources.get("gold", 0.0))}
+        snapshot = {
             "season": self.season_clock.to_dict(),
             "buildings": self.snapshot_buildings(),
             "inventory": self.inventory_snapshot(),
@@ -691,6 +798,10 @@ class GameState:
             "wood_state": self.wood_state_snapshot(),
             "version": version,
         }
+        snapshot["time"] = time_state
+        snapshot["population_detail"] = population_detail
+        snapshot["resources_passive"] = resources_passive
+        return snapshot
 
     def production_reports_snapshot(self) -> Dict[int, Dict[str, object]]:
         snapshot: Dict[int, Dict[str, object]] = {}
@@ -713,11 +824,17 @@ class GameState:
 
     def population_snapshot(self) -> Dict[str, int]:
         with self._lock:
+            total = int(self.population.get("total", self.population_total()))
             current = int(self.population_current)
             capacity = int(self.population_capacity)
             available = int(self.worker_pool.available_workers)
-        available = max(0, min(current, available))
-        return {"current": current, "capacity": capacity, "available": available}
+        available = max(0, min(total, available))
+        return {
+            "current": current,
+            "capacity": capacity,
+            "available": available,
+            "total": total,
+        }
 
     def snapshot_trade(self) -> Dict[str, Dict[str, float | str]]:
         return self.trade_manager.snapshot()
@@ -733,9 +850,16 @@ class GameState:
 
     # ------------------------------------------------------------------
     def _sync_season_state(self) -> None:
-        self.season_snapshot = self.season_clock.to_dict()
-        self.season = self.season_snapshot["season_name"]
+        snapshot = self.season_clock.to_dict()
+        self.season_snapshot = snapshot
         self.season_time_left_sec = self.season_clock.get_time_left()
+        season_name = str(snapshot.get("season_name", "")).lower()
+        current = self.season.get("current") if isinstance(self.season, dict) else None
+        if current != season_name:
+            timestamp = float(self.time.get("server_now", self.time.get("last_tick", 0.0)))
+            self.on_season_start(season_name, timestamp)
+        else:
+            self.season["current"] = season_name
 
     # ------------------------------------------------------------------
     def _build_building_snapshot(self, building: Building) -> Dict[str, object]:
