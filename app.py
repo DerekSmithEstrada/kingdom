@@ -79,5 +79,22 @@ def api_assign_workers(building_id: int):
     return jsonify(response)
 
 
+@app.post("/api/buildings/<int:building_id>/unassign")
+def api_unassign_workers(building_id: int):
+    """Unassign workers from a building using the bridge helper."""
+
+    payload = request.get_json(silent=True) or {}
+    requested = (
+        payload.get("workers")
+        if payload.get("workers") is not None
+        else payload.get("count")
+    )
+    if requested is None:
+        requested = payload.get("unassign") or payload.get("number")
+
+    response = ui_bridge.unassign_workers(building_id, requested or 0)
+    return jsonify(response)
+
+
 if __name__ == "__main__":
     app.run(debug=True)

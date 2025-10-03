@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Dict
 
 from core.game_state import get_game_state
+from core.jobs import WorkerAllocationError
 from core.persistence import load_game as core_load_game, save_game as core_save_game
 from core.resources import Resource
 
@@ -164,10 +165,13 @@ def _mutate_workers(building_id: int, num: int, *, operation: str) -> Dict[str, 
             key: changed,
             "building": snapshot,
             "production_report": snapshot["last_report"],
+            "state": state.basic_state_snapshot(),
         }
         if operation == "assign" and changed < num:
             payload["warning"] = "No se pudieron asignar todos los trabajadores"
         return _success_response(**payload)
+    except WorkerAllocationError as exc:
+        return _error_response("assignment_failed", str(exc))
     except ValueError as exc:
         return _error_response("building_not_found", str(exc))
 

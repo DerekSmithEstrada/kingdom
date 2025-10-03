@@ -26,7 +26,8 @@ def _assign_workers(count: int) -> None:
     state = get_game_state()
     building = state.get_building_by_type(config.WOODCUTTER_CAMP)
     assert building is not None
-    ui_bridge.assign_workers(building.id, count)
+    response = ui_bridge.assign_workers(building.id, count)
+    assert response["ok"] is True, response
 
 
 def test_basic_state_snapshot_defaults():
@@ -65,7 +66,13 @@ def test_wood_increases_by_point_one_per_second_with_workers():
 
 
 def test_additional_workers_do_not_change_generation_rate():
-    _assign_workers(3)
+    state = get_game_state()
+    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
+    assert building is not None
+    failure = ui_bridge.assign_workers(building.id, 3)
+    assert failure["ok"] is False
+    assert failure.get("error_code") == "assignment_failed"
+    _assign_workers(2)
     state = get_game_state()
     for _ in range(5):
         state.tick(1.0)
