@@ -462,7 +462,7 @@
   }
 
   function normalisePopulation(snapshot) {
-    const base = { current: 0, capacity: 0 };
+    const base = { current: 0, capacity: 0, available: 0, total: 0 };
     if (!snapshot || typeof snapshot !== "object") {
       return { ...base };
     }
@@ -481,9 +481,24 @@
     const current = Number.isFinite(rawCurrent) && rawCurrent > 0 ? Math.floor(rawCurrent) : 0;
     const capacityValue = Number.isFinite(rawCapacity) && rawCapacity > 0 ? Math.floor(rawCapacity) : 0;
     const normalisedCapacity = Math.max(capacityValue, current);
+    const rawAvailable = Number(
+      snapshot.available !== undefined
+        ? snapshot.available
+        : snapshot.free !== undefined
+        ? snapshot.free
+        : snapshot.unassigned !== undefined
+        ? snapshot.unassigned
+        : snapshot.current !== undefined
+        ? snapshot.current
+        : rawCurrent
+    );
+    const available = Number.isFinite(rawAvailable)
+      ? Math.max(0, Math.min(current, Math.floor(rawAvailable)))
+      : current;
     return {
       current,
       capacity: normalisedCapacity,
+      available,
       total: current,
     };
   }
@@ -720,6 +735,7 @@
     population: {
       current: 2,
       capacity: 20,
+      available: 2,
       total: 2,
     },
     buildings: [
@@ -806,6 +822,9 @@
   const JOB_BUILDING_MAP = {
     forester: "woodcutter_camp",
   };
+
+  const JOB_ASSIGNMENT_PLACEHOLDER_MESSAGE =
+    "Asigná trabajadores desde la tarjeta del edificio. Jobs es solo visual.";
 
   const jobsList = document.getElementById("jobs-list");
   const tradeList = document.getElementById("trade-list");
@@ -921,7 +940,16 @@
           valueSpan.textContent = `${formatAmount(state.resources.happiness)}%`;
           break;
         case "population":
-          valueSpan.textContent = `${state.population.current || 0}/${state.population.capacity || 0}`;
+          {
+            const total = state.population.current || 0;
+            const capacity = state.population.capacity || 0;
+            const providedAvailable = Number(state.population.available);
+            const fallbackAvailable = Math.max(0, Math.min(total, total - assigned));
+            const available = Number.isFinite(providedAvailable)
+              ? Math.max(0, Math.min(total, Math.floor(providedAvailable)))
+              : fallbackAvailable;
+            valueSpan.textContent = `${available}/${capacity}`;
+          }
           break;
         default:
           if (state.resources[resourceKey] !== undefined) {
@@ -1776,6 +1804,9 @@
       decrement.dataset.action = "job-decrement";
       decrement.dataset.jobId = job.id;
       decrement.textContent = "-";
+      decrement.disabled = true;
+      decrement.setAttribute("aria-disabled", "true");
+      decrement.title = JOB_ASSIGNMENT_PLACEHOLDER_MESSAGE;
 
       const input = document.createElement("input");
       input.type = "number";
@@ -1783,12 +1814,19 @@
       input.max = String(job.max);
       input.value = String(job.assigned);
       input.dataset.jobInput = job.id;
+      input.disabled = true;
+      input.readOnly = true;
+      input.setAttribute("aria-disabled", "true");
+      input.title = JOB_ASSIGNMENT_PLACEHOLDER_MESSAGE;
 
       const increment = document.createElement("button");
       increment.type = "button";
       increment.dataset.action = "job-increment";
       increment.dataset.jobId = job.id;
       increment.textContent = "+";
+      increment.disabled = true;
+      increment.setAttribute("aria-disabled", "true");
+      increment.title = JOB_ASSIGNMENT_PLACEHOLDER_MESSAGE;
 
       controls.append(decrement, input, increment);
 
@@ -1813,6 +1851,9 @@
     if (input) {
       input.value = String(job.assigned);
       input.max = String(job.max);
+      input.disabled = true;
+      input.setAttribute("aria-disabled", "true");
+      input.title = JOB_ASSIGNMENT_PLACEHOLDER_MESSAGE;
     }
   }
 
@@ -2116,6 +2157,12 @@
   function updateJobsCount() {
     const assigned = getTotalAssigned();
     const total = state.population.current || 0;
+    const providedAvailable = Number(state.population.available);
+    const fallbackAvailable = Math.max(0, Math.min(total, total - assigned));
+    const nextAvailable = Number.isFinite(providedAvailable)
+      ? Math.max(0, Math.min(total, Math.floor(providedAvailable)))
+      : fallbackAvailable;
+    state.population.available = nextAvailable;
     jobsCountLabel.textContent = `${assigned}/${total}`;
     updateChips();
   }
@@ -2228,25 +2275,6 @@
     }
   }
 
-  async function adjustJob(jobId, delta) {
-    const building = findPrimaryBuildingForJob(jobId);
-    if (!building) {
-      return;
-    }
-    const current = getBuildingAssignedWorkers(building);
-    await assignBuildingWorkers(building.id, current + delta);
-  }
-
-  async function setJob(jobId, value) {
-    const building = findPrimaryBuildingForJob(jobId);
-    if (!building) {
-      return;
-    }
-    const numeric = Number(value);
-    const desired = Number.isFinite(numeric) ? Math.floor(numeric) : 0;
-    await assignBuildingWorkers(building.id, desired);
-  }
-
   function adjustTrade(itemId, changes) {
     const item = state.trade.find((entry) => entry.id === itemId);
     if (!item) return;
@@ -2309,35 +2337,22 @@
       }
       return;
     }
-    const { jobId } = button.dataset;
-    if (!jobId) return;
-    const building = findPrimaryBuildingForJob(jobId);
-    if (building && pendingWorkerRequests.has(String(building.id))) {
+    if (action === "job-increment" || action === "job-decrement") {
+      event.preventDefault();
       return;
-    }
-    if (action === "job-increment") {
-      await adjustJob(jobId, 1);
-    } else if (action === "job-decrement") {
-      await adjustJob(jobId, -1);
     }
   }
 
-  async function handleJobInput(event) {
+  function handleJobInput(event) {
     const input = event.target;
     if (!input.matches("input[data-job-input]")) return;
     const jobId = input.dataset.jobInput;
-    const building = findPrimaryBuildingForJob(jobId);
-    if (building && pendingWorkerRequests.has(String(building.id))) {
-      return;
+    const job = state.jobs.find((candidate) => candidate.id === jobId);
+    if (job) {
+      input.value = String(job.assigned);
+    } else {
+      input.value = "0";
     }
-    const value = Number(input.value);
-    if (!Number.isFinite(value)) {
-      input.value = 0;
-      return;
-    }
-    const sanitized = Math.max(0, Math.floor(value));
-    input.value = sanitized;
-    await setJob(jobId, sanitized);
   }
 
   function handleTradeActions(event) {
@@ -2503,11 +2518,13 @@
       const nextPopulation = normalisePopulation(payload.population);
       if (
         state.population.current !== nextPopulation.current ||
-        state.population.capacity !== nextPopulation.capacity
+        state.population.capacity !== nextPopulation.capacity ||
+        state.population.available !== nextPopulation.available
       ) {
         state.population.current = nextPopulation.current;
         state.population.capacity = nextPopulation.capacity;
         state.population.total = nextPopulation.current;
+        state.population.available = nextPopulation.available;
         changed = true;
       }
     }
@@ -2543,16 +2560,60 @@
       if (!match) {
         return;
       }
-      Object.assign(match, {
-        inputs: remote.inputs,
-        outputs: remote.outputs,
-        can_produce: remote.can_produce,
-        reason: remote.reason,
-        effective_rate: remote.effective_rate,
-        pending_eta: remote.pending_eta,
-        last_report: remote.last_report,
-        cycle_time: remote.cycle_time,
-      });
+      match.inputs = remote.inputs;
+      match.outputs = remote.outputs;
+      match.can_produce = remote.can_produce;
+      match.reason = remote.reason;
+      match.effective_rate = remote.effective_rate;
+      match.pending_eta = remote.pending_eta;
+      match.last_report = remote.last_report;
+      match.cycle_time = remote.cycle_time;
+      if (remote.production_report) {
+        match.production_report = remote.production_report;
+      } else if (remote.last_report) {
+        match.production_report = remote.last_report;
+      }
+      if (typeof remote.status === "string") {
+        match.status = remote.status;
+      }
+      if (typeof remote.enabled === "boolean") {
+        match.enabled = remote.enabled;
+      }
+
+      const nextBuilt = Number(remote.built);
+      if (Number.isFinite(nextBuilt)) {
+        match.built = Math.max(0, nextBuilt);
+      }
+
+      const nextCapacity = Number(remote.capacityPerBuilding);
+      if (Number.isFinite(nextCapacity) && nextCapacity > 0) {
+        match.capacityPerBuilding = nextCapacity;
+      }
+
+      const nextMaxWorkers = Number(remote.max_workers);
+      if (Number.isFinite(nextMaxWorkers) && nextMaxWorkers > 0) {
+        match.max_workers = nextMaxWorkers;
+      }
+
+      const candidates = [remote.active, remote.workers, remote.active_workers];
+      const resolvedActive = candidates.reduce((value, candidate) => {
+        if (value !== null) {
+          return value;
+        }
+        const numeric = Number(candidate);
+        if (Number.isFinite(numeric)) {
+          return numeric;
+        }
+        return null;
+      }, null);
+
+      if (resolvedActive !== null) {
+        const safeActive = Math.max(0, Math.floor(resolvedActive));
+        match.active = safeActive;
+        match.active_workers = safeActive;
+        match.workers = safeActive;
+        match.assigned_workers = safeActive;
+      }
       buildingsUpdated = true;
     });
 

@@ -398,7 +398,9 @@ class GameState:
         with self._lock:
             current = int(self.population_current)
             capacity = int(self.population_capacity)
-        return {"current": current, "capacity": capacity}
+            available = int(self.worker_pool.available_workers)
+        available = max(0, min(current, available))
+        return {"current": current, "capacity": capacity, "available": available}
 
     def snapshot_trade(self) -> Dict[str, Dict[str, float | str]]:
         return self.trade_manager.snapshot()
