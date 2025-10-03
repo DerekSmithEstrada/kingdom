@@ -26,7 +26,7 @@ def _assign_workers(count: int) -> None:
     state = get_game_state()
     building = state.get_building_by_type(config.WOODCUTTER_CAMP)
     assert building is not None
-    response = ui_bridge.assign_workers(building.id, count)
+    response = ui_bridge.change_building_workers(building.id, count)
     assert response["ok"] is True, response
 
 
@@ -69,7 +69,7 @@ def test_additional_workers_do_not_change_generation_rate():
     state = get_game_state()
     building = state.get_building_by_type(config.WOODCUTTER_CAMP)
     assert building is not None
-    failure = ui_bridge.assign_workers(building.id, 3)
+    failure = ui_bridge.change_building_workers(building.id, 3)
     assert failure["ok"] is False
     assert failure.get("error_code") == "assignment_failed"
     _assign_workers(2)
@@ -83,7 +83,7 @@ def test_jobs_reflect_building_assignments():
     state = get_game_state()
     building = state.get_building_by_type(config.WOODCUTTER_CAMP)
     assert building is not None
-    ui_bridge.assign_workers(building.id, 2)
+    ui_bridge.change_building_workers(building.id, 2)
     snapshot = state.basic_state_snapshot()
     assert snapshot["buildings"][config.WOODCUTTER_CAMP]["workers"] == 2
     assert snapshot["jobs"]["forester"]["assigned"] == 2
@@ -94,7 +94,21 @@ def test_population_pool_recovers_after_unassign():
     state = get_game_state()
     building = state.get_building_by_type(config.WOODCUTTER_CAMP)
     assert building is not None
-    ui_bridge.assign_workers(building.id, 1)
-    ui_bridge.unassign_workers(building.id, 1)
+    ui_bridge.change_building_workers(building.id, 1)
+    ui_bridge.change_building_workers(building.id, -1)
     snapshot = state.basic_state_snapshot()
     assert snapshot["population"] == {"current": 2, "capacity": 20, "available": 2}
+
+
+def test_change_building_workers_delta_payload():
+    state = get_game_state()
+    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
+    assert building is not None
+    assigned = ui_bridge.change_building_workers(building.id, 1)
+    assert assigned["ok"] is True
+    assert assigned["delta"] == 1
+    assert assigned["assigned"] == 1
+    released = ui_bridge.change_building_workers(building.id, -1)
+    assert released["ok"] is True
+    assert released["delta"] == -1
+    assert released["assigned"] == 0

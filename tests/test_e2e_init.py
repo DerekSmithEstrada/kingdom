@@ -79,12 +79,13 @@ def test_forced_init_and_first_production_cycle(client):
     assert after_idle_state["items"]["wood"] == pytest.approx(0.0)
 
     assign_response = client.post(
-        f"/api/buildings/{building['id']}/assign",
-        json={"workers": 1},
+        f"/api/buildings/{building['id']}/workers",
+        json={"delta": 1},
     )
     assert assign_response.status_code == 200
     assign_payload = assign_response.get_json()
     assert assign_payload["ok"] is True
+    assert assign_payload["delta"] == 1
     assigned_building = assign_payload.get("building", {})
     assert assigned_building.get("active_workers") == 1
     state_snapshot = assign_payload.get("state", {})

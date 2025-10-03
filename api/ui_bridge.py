@@ -149,26 +149,32 @@ def toggle_building(building_id: int, enabled: bool) -> Dict[str, object]:
 # Worker management
 
 
-def _mutate_workers(building_id: int, num: int, *, operation: str) -> Dict[str, object]:
+def change_building_workers(building_id: int, delta: int) -> Dict[str, object]:
     state = get_game_state()
     try:
         building_id = int(building_id)
-        num = int(num)
-        if operation == "assign":
-            changed = state.assign_workers(building_id, num)
-            key = "assigned"
-        else:
-            changed = state.unassign_workers(building_id, num)
-            key = "unassigned"
+    except (TypeError, ValueError):
+        return _error_response(
+            "invalid_building_id", "El identificador de edificio es inválido"
+        )
+
+    try:
+        delta = int(delta)
+    except (TypeError, ValueError):
+        return _error_response(
+            "invalid_delta", "El cambio de trabajadores debe ser un número entero"
+        )
+
+    try:
+        result = state.apply_worker_delta(building_id, delta)
         snapshot = state.snapshot_building(building_id)
         payload: Dict[str, object] = {
-            key: changed,
+            "delta": result["delta"],
+            "assigned": result["assigned"],
             "building": snapshot,
             "production_report": snapshot["last_report"],
             "state": state.basic_state_snapshot(),
         }
-        if operation == "assign" and changed < num:
-            payload["warning"] = "No se pudieron asignar todos los trabajadores"
         return _success_response(**payload)
     except WorkerAllocationError as exc:
         return _error_response("assignment_failed", str(exc))
@@ -177,11 +183,11 @@ def _mutate_workers(building_id: int, num: int, *, operation: str) -> Dict[str, 
 
 
 def assign_workers(building_id: int, num: int) -> Dict[str, object]:
-    return _mutate_workers(building_id, num, operation="assign")
+    return change_building_workers(building_id, num)
 
 
 def unassign_workers(building_id: int, num: int) -> Dict[str, object]:
-    return _mutate_workers(building_id, num, operation="unassign")
+    return change_building_workers(building_id, -num)
 
 
 # ---------------------------------------------------------------------------

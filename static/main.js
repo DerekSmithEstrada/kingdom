@@ -581,6 +581,29 @@
     }
   }
 
+  function setWorkerFeedback(entry, message, options = {}) {
+    if (!entry || !entry.workerFeedback) {
+      return;
+    }
+    const { variant = "info", state = "" } = options;
+    const element = entry.workerFeedback;
+    if (!message) {
+      element.textContent = "";
+      element.hidden = true;
+      delete element.dataset.variant;
+      delete element.dataset.state;
+      return;
+    }
+    element.textContent = String(message);
+    element.hidden = false;
+    element.dataset.variant = variant;
+    if (state) {
+      element.dataset.state = state;
+    } else {
+      delete element.dataset.state;
+    }
+  }
+
   function findPrimaryBuildingForJob(jobId) {
     if (typeof jobId !== "string" || !jobId) {
       return null;
@@ -1359,6 +1382,9 @@
     const workerGroup = document.createElement("div");
     workerGroup.className = "worker-group";
 
+    const workerHeader = document.createElement("div");
+    workerHeader.className = "worker-header";
+
     const workerLabel = document.createElement("span");
     workerLabel.className = "worker-label";
     workerLabel.textContent = "Workers";
@@ -1386,7 +1412,13 @@
     incrementButton.textContent = "+";
 
     workerControls.append(decrementButton, workerInput, incrementButton);
-    workerGroup.append(workerLabel, workerControls);
+    workerHeader.append(workerLabel, workerControls);
+    workerGroup.appendChild(workerHeader);
+
+    const workerFeedback = document.createElement("p");
+    workerFeedback.className = "worker-feedback";
+    workerFeedback.hidden = true;
+    workerGroup.appendChild(workerFeedback);
 
     const assignButton = document.createElement("button");
     assignButton.type = "button";
@@ -1421,6 +1453,7 @@
       producesList: produces.list,
       producesEmpty: produces.empty,
       producesItems: new Map(),
+      workerFeedback,
     };
   }
 
@@ -2200,6 +2233,9 @@
     const current = getBuildingAssignedWorkers(building);
 
     const entry = buildingElementMap.get(resolveBuildingElementKey(building.id));
+    if (entry) {
+      setWorkerFeedback(entry, null);
+    }
     if (sanitized === current) {
       if (entry) {
         updateWorkerControls(entry, building);
@@ -2223,25 +2259,36 @@
       return true;
     }
 
-    const operation = delta > 0 ? "assign" : "unassign";
     setWorkerRequestPending(building.id, true);
+    if (entry) {
+      setWorkerFeedback(entry, "Sincronizando con el servidor…", {
+        variant: "info",
+        state: "syncing",
+      });
+    }
 
     let payload = null;
     try {
-      const response = await fetch(`/api/buildings/${building.id}/${operation}`, {
+      const response = await fetch(`/api/buildings/${building.id}/workers`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workers: amount }),
+        cache: "no-store",
+        body: JSON.stringify({ delta }),
       });
-      if (!response) {
-        return false;
-      }
       try {
         payload = await response.json();
       } catch (error) {
         payload = null;
       }
-      if (!response.ok) {
+      const success = Boolean(response && response.ok && payload && payload.ok);
+      if (!success) {
+        const message =
+          (payload &&
+            (payload.error_message || payload.error || payload.message)) ||
+          "No se pudo actualizar la asignación";
+        if (entry) {
+          setWorkerFeedback(entry, message, { variant: "error" });
+        }
         if (
           payload &&
           typeof payload.error_message === "string" &&
@@ -2252,22 +2299,40 @@
         }
         return false;
       }
-      if (!payload || payload.ok !== true) {
-        return false;
-      }
       if (payload.state) {
         applyPublicState(payload.state);
       }
       if (payload.building) {
         updateBuildingsFromPayload({ buildings: [payload.building] });
       }
+      const assignedValue = Number(payload.assigned);
+      if (Number.isFinite(assignedValue)) {
+        building.active = assignedValue;
+        building.active_workers = assignedValue;
+        building.workers = assignedValue;
+      }
+      if (entry) {
+        setWorkerFeedback(entry, null);
+      }
       return true;
     } catch (error) {
+      if (entry) {
+        setWorkerFeedback(entry, "Error al contactar al servidor", {
+          variant: "error",
+        });
+      }
       if (typeof console !== "undefined" && typeof console.error === "function") {
         console.error("[Idle Village] Error asignando trabajadores", error);
       }
       return false;
     } finally {
+      if (
+        entry &&
+        entry.workerFeedback &&
+        entry.workerFeedback.dataset.state === "syncing"
+      ) {
+        setWorkerFeedback(entry, null);
+      }
       setWorkerRequestPending(building.id, false);
       if (entry) {
         updateWorkerControls(entry, building);
@@ -2276,16 +2341,9 @@
   }
 
   function adjustTrade(itemId, changes) {
-    const item = state.trade.find((entry) => entry.id === itemId);
-    if (!item) return;
-    if (typeof changes.export === "number") {
-      item.export = Math.max(0, changes.export);
-    }
-    if (typeof changes.import === "number") {
-      item.import = Math.max(0, changes.import);
-    }
-    saveState();
-    renderTrade();
+    void itemId;
+    void changes;
+    return false;
   }
 
   async function handleBuildingActions(event) {
@@ -2358,30 +2416,22 @@
   function handleTradeActions(event) {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
-    const { action, tradeId } = button.dataset;
-    const item = state.trade.find((entry) => entry.id === tradeId);
-    if (!item) return;
-    if (action === "trade-export") {
-      adjustTrade(tradeId, { export: item.export + 1 });
-    } else if (action === "trade-import") {
-      adjustTrade(tradeId, { import: item.import + 1 });
-    }
+    event.preventDefault();
+    renderTrade();
+    return;
   }
 
   function handleTradeInputs(event) {
     const target = event.target;
-    if (target.matches("input[data-trade-slider]")) {
-      const tradeId = target.dataset.tradeSlider;
-      adjustTrade(tradeId, { export: Number(target.value) });
+    const shouldReset =
+      target.matches("input[data-trade-slider]") ||
+      target.matches("input[data-trade-import-slider]") ||
+      target.matches("input[data-trade-input]");
+    if (!shouldReset) {
+      return;
     }
-    if (target.matches("input[data-trade-import-slider]")) {
-      const tradeId = target.dataset.tradeImportSlider;
-      adjustTrade(tradeId, { import: Number(target.value) });
-    }
-    if (target.matches("input[data-trade-input]")) {
-      const tradeId = target.dataset.tradeInput;
-      adjustTrade(tradeId, { import: Number(target.value) });
-    }
+    event.preventDefault();
+    renderTrade();
   }
 
   async function fetchJson(url, options) {
