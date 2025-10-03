@@ -1,44 +1,164 @@
 :root {
   color-scheme: dark;
   font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --space-4: 0.25rem;
+  --space-8: 0.5rem;
+  --space-12: 0.75rem;
+  --space-16: 1rem;
+  --space-20: 1.25rem;
+  --card-radius: 0.75rem;
+  --card-padding: var(--space-16);
+  --chip-height: 3.25rem;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 body {
   font-family: inherit;
+  margin: 0;
+  overflow-x: hidden;
+}
+
+button {
+  font-family: inherit;
+}
+
+button:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+.page-container {
+  width: min(100%, 78rem);
+  margin-inline: auto;
+  padding-inline: var(--space-16);
+  padding-block: var(--space-20);
+}
+
+.app-header .page-container {
+  padding-block: var(--space-16);
+}
+
+.header-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+@media (min-width: 640px) {
+  .header-row {
+    align-items: center;
+    flex-direction: row;
+    justify-content: space-between;
+  }
+}
+
+.page-title {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.resource-grid {
+  display: grid;
+  gap: var(--space-16);
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+}
+
+.dashboard-grid {
+  display: grid;
+  gap: var(--space-20);
+}
+
+@media (min-width: 1024px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1279px) {
+  #buildings,
+  #jobs {
+    grid-column: 1;
+  }
+
+  #trade {
+    grid-column: 2;
+    align-self: flex-start;
+  }
+}
+
+@media (min-width: 1280px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  #buildings,
+  #jobs,
+  #trade {
+    grid-column: auto;
+  }
+
+  #trade {
+    align-self: stretch;
+  }
 }
 
 .chip {
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+  align-items: center;
+  gap: var(--space-12);
   justify-content: space-between;
-  border-radius: 0.75rem;
+  border-radius: var(--card-radius);
   border: 1px solid rgb(71 85 105 / 0.7);
   background-color: rgb(30 41 59 / 0.6);
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-12) var(--space-16);
   font-size: 0.875rem;
   font-weight: 600;
   box-shadow: 0 10px 30px -15px rgb(15 23 42 / 0.7);
-}
-
-@media (min-width: 640px) {
-  .chip {
-    flex-direction: row;
-    align-items: center;
-  }
+  min-height: var(--chip-height);
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .chip .value {
+  display: inline-flex;
+  align-items: center;
   font-weight: 700;
   color: rgb(226 232 240);
+  margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip .label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.resource-chip {
+  flex: 1 1 11rem;
+  padding-inline: var(--space-16);
 }
 
 #season-bar {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 0.35rem;
+  gap: var(--space-8);
   text-align: right;
+  flex-shrink: 0;
+  min-width: 11.5rem;
 }
 
 .season-label {
@@ -79,6 +199,7 @@ body {
   font-size: 1.75rem;
   box-shadow: inset 0 1px 0 rgb(148 163 184 / 0.35);
   color: rgb(226 232 240);
+  flex-shrink: 0;
 }
 
 .icon-badge--sm {
@@ -88,11 +209,17 @@ body {
 }
 
 .panel {
-  border-radius: 0.9rem;
+  border-radius: var(--card-radius);
   border: 1px solid rgb(30 41 59 / 0.8);
   background: rgb(15 23 42 / 0.75);
-  padding: 1.25rem;
+  padding: var(--card-padding);
   box-shadow: 0 25px 60px -35px rgb(8 15 30 / 0.7);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-width: 0;
+  min-height: 0;
 }
 
 .panel-highlight {
@@ -103,20 +230,24 @@ body {
 .panel-header {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  border-bottom: 1px solid rgb(51 65 85 / 0.8);
-  padding-bottom: 0.75rem;
-  margin-bottom: 1rem;
+  gap: var(--space-12);
+  border-bottom: 1px solid rgb(51 65 85 / 0.5);
+  padding-bottom: var(--space-12);
+  margin: 0;
 }
 
 .panel-title {
   font-size: 1.125rem;
   font-weight: 600;
   letter-spacing: 0.08em;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .accordion {
-  border-radius: 0.75rem;
+  border-radius: var(--card-radius);
   border: 1px solid rgb(51 65 85 / 0.8);
   background: rgb(15 23 42 / 0.5);
   overflow: hidden;
@@ -127,8 +258,8 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 1rem;
-  padding: 0.75rem 1rem;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
   text-align: left;
   font-size: 0.75rem;
   font-weight: 700;
@@ -145,7 +276,7 @@ body {
 .accordion-content {
   display: none;
   border-top: 1px solid rgb(51 65 85 / 0.6);
-  padding: 1rem;
+  padding: var(--space-16);
 }
 
 .accordion.open .accordion-content {
@@ -156,15 +287,57 @@ body {
   transform: rotate(180deg);
 }
 
+#building-accordion {
+  display: grid;
+  gap: var(--space-16);
+}
+
+#building-accordion > * {
+  margin: 0 !important;
+}
+
+.accordion-content > ul {
+  display: grid;
+  gap: var(--space-16);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.accordion-content > ul > * {
+  margin: 0 !important;
+}
+
+#jobs-list,
+#trade-list {
+  display: grid;
+  gap: var(--space-16);
+}
+
+#jobs-list {
+  align-content: start;
+}
+
+#trade-list {
+  align-content: start;
+}
+
+#jobs-list > *,
+#trade-list > * {
+  margin: 0 !important;
+}
+
 .building-card {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 1rem;
-  border-radius: 0.75rem;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-16);
+  border-radius: var(--card-radius);
   border: 1px solid rgb(51 65 85 / 0.8);
   background: rgb(15 23 42 / 0.6);
-  padding: 1rem;
+  padding: var(--card-padding);
   box-shadow: 0 15px 35px -25px rgb(8 15 30 / 0.8);
+  overflow: hidden;
+  align-items: flex-start;
 }
 
 .building-card--highlighted {
@@ -179,9 +352,38 @@ body {
 }
 
 .building-meta {
-  display: grid;
-  gap: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
   font-size: 0.875rem;
+  min-width: 0;
+}
+
+.building-card .flex.items-start.justify-between.gap-2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  flex-wrap: wrap;
+  row-gap: var(--space-8);
+  min-width: 0;
+}
+
+.building-card h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.building-card .text-\[0\.65rem\] {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: rgb(148 163 184);
 }
 
 .building-list-item {
@@ -192,8 +394,9 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.4rem;
-  margin-top: 0.1rem;
+  gap: var(--space-8);
+  row-gap: var(--space-4);
+  margin: 0;
 }
 
 .status-chip {
@@ -282,7 +485,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--space-12);
   font-size: 0.75rem;
   color: rgb(148 163 184);
 }
@@ -291,15 +494,19 @@ body {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.4rem;
+  gap: var(--space-8);
   font-size: 0.75rem;
   color: rgb(203 213 225);
+  flex: 1 1 14rem;
+  min-width: 12.5rem;
 }
 
 .worker-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-12);
+  width: 100%;
+  flex-wrap: wrap;
 }
 
 .worker-label {
@@ -307,17 +514,23 @@ body {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgb(148 163 184);
+  white-space: nowrap;
 }
 
 .worker-controls {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--space-8);
+  flex: 1 1 auto;
 }
 
 .worker-controls button {
-  min-width: 1.75rem;
-  padding-inline: 0.4rem;
+  min-width: 2.25rem;
+  height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
 }
 
 .worker-controls input {
@@ -328,13 +541,16 @@ body {
   border: 1px solid rgb(71 85 105 / 0.7);
   background: rgb(15 23 42 / 0.6);
   color: rgb(226 232 240);
-  padding: 0.2rem 0.3rem;
+  padding: 0.25rem 0.3rem;
+  min-width: 3.25rem;
+  height: 2.25rem;
 }
 
 .worker-feedback {
   margin: 0;
   font-size: 0.7rem;
   color: rgb(148 163 184);
+  min-height: 1.25rem;
 }
 
 .worker-feedback[data-variant="error"] {
@@ -355,7 +571,7 @@ body {
 .io-section {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--space-12);
   font-size: 0.7rem;
   color: rgb(148 163 184);
 }
@@ -363,8 +579,9 @@ body {
 .io-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-12);
   justify-content: space-between;
+  flex-wrap: wrap;
 }
 
 .io-label {
@@ -373,18 +590,22 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: rgb(226 232 240 / 0.8);
+  white-space: nowrap;
 }
 
 .io-values {
   display: flex;
   flex: 1;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  min-width: 0;
 }
 
 .io-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
+  gap: var(--space-8);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -427,8 +648,11 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.75rem;
+  gap: var(--space-12);
+  row-gap: var(--space-8);
+  margin: 0;
+  padding-top: var(--space-12);
+  border-top: 1px solid rgb(51 65 85 / 0.4);
 }
 
 .action-row button,
@@ -436,13 +660,18 @@ body {
   border-radius: 0.5rem;
   background: rgb(51 65 85 / 0.85);
   border: 1px solid rgb(71 85 105 / 0.6);
-  padding: 0.35rem 0.75rem;
+  padding: 0 1rem;
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: rgb(226 232 240);
   transition: background 0.2s ease;
+  min-height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
 }
 
 .action-row button:hover,
@@ -450,10 +679,10 @@ body {
   background: rgb(71 85 105 / 0.8);
 }
 
-.action-row input[type="number"],
 .job-card input[type="number"],
 .trade-row input[type="number"] {
   width: 4.5rem;
+  min-width: 4.5rem;
   border-radius: 0.5rem;
   border: 1px solid rgb(51 65 85 / 0.8);
   background: rgb(15 23 42 / 0.8);
@@ -461,23 +690,72 @@ body {
   font-size: 0.75rem;
   text-align: right;
   color: rgb(226 232 240);
+  height: 2.25rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .job-card {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  border-radius: 0.75rem;
+  gap: var(--space-12);
+  border-radius: var(--card-radius);
   border: 1px solid rgb(51 65 85 / 0.8);
   background: rgb(15 23 42 / 0.6);
-  padding: 1rem;
+  padding: var(--card-padding);
   box-shadow: 0 15px 35px -25px rgb(8 15 30 / 0.8);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.job-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  flex-wrap: wrap;
+}
+
+.job-card > header > .flex {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-12);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.job-card > header > .flex span:last-child {
+  white-space: nowrap;
+}
+
+.job-card [data-job-counter] {
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.job-card .controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  flex-wrap: wrap;
+}
+
+.job-card .controls input[type="number"] {
+  width: 4rem;
+  min-width: 4rem;
+  height: 2.25rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.job-card .controls button {
+  min-width: 2.25rem;
+  padding: 0;
 }
 
 .job-resource-strip {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: var(--space-8);
 }
 
 .job-resource-strip[hidden] {
@@ -487,7 +765,7 @@ body {
 .job-resource-pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--space-8);
   border-radius: 9999px;
   border: 1px solid rgb(71 85 105 / 0.7);
   background: rgb(15 23 42 / 0.7);
@@ -709,46 +987,114 @@ body {
 }
 
 .trade-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  border-radius: 0.75rem;
+  display: grid;
+  gap: var(--space-16);
+  border-radius: var(--card-radius);
   border: 1px solid rgb(51 65 85 / 0.8);
   background: rgb(15 23 42 / 0.6);
-  padding: 1rem;
+  padding: var(--card-padding);
   box-shadow: 0 15px 35px -25px rgb(8 15 30 / 0.8);
+  overflow: hidden;
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "meta"
+    "controls"
+    "balance";
+  min-width: 0;
+}
+
+.trade-row > :first-child {
+  grid-area: meta;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-12);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.trade-row > :first-child span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trade-row .controls {
+  grid-area: controls;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-12);
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.trade-row .controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex: 1 1 10rem;
+  min-width: 9.5rem;
+  color: rgb(203 213 225);
+  white-space: nowrap;
+  margin: 0;
+  overflow: hidden;
+}
+
+.trade-row .controls label span {
+  flex: 0 0 auto;
+}
+
+.trade-row .controls label input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 6rem;
+  width: 100%;
+}
+
+.trade-row .balance {
+  grid-area: balance;
+  justify-self: flex-start;
+  white-space: nowrap;
 }
 
 @media (min-width: 640px) {
   .trade-row {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "meta balance"
+      "controls controls";
+    align-items: start;
+  }
+
+  .trade-row .balance {
+    justify-self: flex-end;
   }
 }
 
-.trade-row .controls {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-@media (min-width: 640px) {
-  .trade-row .controls {
-    flex-direction: row;
+@media (min-width: 1024px) {
+  .trade-row {
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr) auto;
+    grid-template-areas: "meta controls balance";
     align-items: center;
+  }
+
+  .trade-row .controls {
+    justify-content: flex-start;
   }
 }
 
 .trade-row button {
   border-radius: 0.5rem;
-  padding: 0.35rem 0.75rem;
+  padding: 0 1rem;
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   transition: background 0.2s ease;
+  min-height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
 }
 
 .trade-row button.export {
