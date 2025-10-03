@@ -2596,26 +2596,54 @@
     setInterval(performTick, 5000);
   }
 
+  let woodPollingIntervalId = null;
+
   function startWoodPolling() {
     if (typeof fetch !== "function") return;
+    if (woodPollingIntervalId !== null) {
+      return;
+    }
     const woodValueElement = document.querySelector(
       '.chip[data-resource="wood"] .value'
     );
     if (!woodValueElement) return;
 
     const updateWood = async () => {
-      const payload = await fetchJson("/state");
-      if (!payload || !payload.items) return;
-      const amount = Number(payload.items.wood);
-      const formatted = Number.isFinite(amount) ? amount.toFixed(1) : "0.0";
-      woodValueElement.textContent = formatted;
-      if (state.resources) {
-        state.resources.wood = Number.isFinite(amount) ? amount : 0;
+      try {
+        const response = await fetch(`/state?t=${Date.now()}`, {
+          cache: "no-store",
+          headers: { "Cache-Control": "no-cache" },
+        });
+        if (!response || !response.ok) {
+          if (typeof console !== "undefined" && typeof console.error === "function") {
+            console.error(
+              "[Idle Village] No se pudo obtener /state para Wood",
+              response ? response.status : "sin respuesta"
+            );
+          }
+          return;
+        }
+        const payload = await response.json();
+        if (!payload || !payload.items) {
+          return;
+        }
+        const amount = Number(payload.items.wood);
+        const formatted = Number.isFinite(amount)
+          ? amount.toFixed(1).replace(".", ",")
+          : "0,0";
+        woodValueElement.textContent = formatted;
+        if (state.resources) {
+          state.resources.wood = Number.isFinite(amount) ? amount : 0;
+        }
+      } catch (error) {
+        if (typeof console !== "undefined" && typeof console.error === "function") {
+          console.error("[Idle Village] Error consultando /state", error);
+        }
       }
     };
 
     updateWood();
-    setInterval(updateWood, 1000);
+    woodPollingIntervalId = setInterval(updateWood, 1000);
   }
 
   function attachAccordion() {
