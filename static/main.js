@@ -323,6 +323,7 @@
   const resourceIconMap = {
     gold: "🪙",
     wood: "🪵",
+    sticks: "🥢",
     planks: "🪚",
     plank: "🪚",
     stone: "🪨",
@@ -336,7 +337,7 @@
     happiness: "😊",
   };
 
-  const WOODCUTTER_RATE_PER_SECOND = 0.1;
+  const WOODCUTTER_RATE_PER_SECOND = 0.01;
 
   const numberFormatter = new Intl.NumberFormat(undefined, {
     maximumFractionDigits: 2,
@@ -407,6 +408,10 @@
     const outputs = normaliseResourceMap(
       building.outputs || building.output || building.outputs_per_cycle
     );
+    const storage = normaliseResourceMap(
+      building.storage || building.capacity_map || {}
+    );
+    const cost = normaliseResourceMap(building.cost);
     const effectiveRate = Number(building.effective_rate);
     const cycleTime = Number(
       building.cycle_time || building.cycle_time_sec || building.cycleTime
@@ -455,6 +460,7 @@
     const normalised = {
       inputs,
       outputs,
+      storage,
       can_produce:
         typeof building.can_produce === "boolean" ? building.can_produce : false,
       reason: typeof building.reason === "string" ? building.reason : null,
@@ -482,6 +488,9 @@
     }
     if (producesUnit) {
       normalised.produces_unit = producesUnit;
+    }
+    if (Object.keys(cost).length > 0) {
+      normalised.cost = cost;
     }
 
     return { ...building, ...normalised };
@@ -781,6 +790,18 @@
     return numberFormatter.format(numeric);
   }
 
+  function toDisplayInt(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return 0;
+    }
+    return Math.floor(numeric);
+  }
+
+  function formatInventoryValue(value) {
+    return numberFormatter.format(toDisplayInt(value));
+  }
+
   function formatResourceKey(key) {
     if (typeof key !== "string") {
       return "";
@@ -893,8 +914,9 @@
   const defaultState = {
     resources: {
       happiness: 0,
-      gold: 0,
+      gold: 10,
       wood: 0,
+      sticks: 0,
       planks: 0,
       stone: 0,
       tools: 0,
@@ -905,10 +927,10 @@
       hops: 0,
     },
     population: {
-      current: 2,
+      current: 4,
       capacity: 20,
-      available: 2,
-      total: 2,
+      available: 4,
+      total: 4,
     },
     buildings: [
       {
@@ -919,12 +941,70 @@
         category: "wood",
         built: 1,
         active: 0,
-        capacityPerBuilding: 10,
+        capacityPerBuilding: 30,
+        storage: { wood: 30 },
+        cost: { sticks: 30, stone: 20, gold: 10 },
         icon: "🪓",
         inputs: {},
-        outputs: { wood: 0.1 },
+        outputs: { wood: 0.01 },
         produces_per_min: 0,
         produces_unit: "wood/min",
+        effective_rate: 0,
+        can_produce: false,
+        reason: "no_workers",
+        pending_eta: null,
+        last_report: {
+          status: "inactive",
+          reason: "inactive",
+          detail: null,
+          consumed: {},
+          produced: {},
+        },
+        cycle_time: 1,
+      },
+      {
+        id: "stick_gathering_tent",
+        type: "stick_gathering_tent",
+        name: "Stick-gathering Tent",
+        category: "wood",
+        built: 1,
+        active: 0,
+        capacityPerBuilding: 30,
+        storage: { sticks: 30 },
+        cost: { sticks: 4, gold: 1 },
+        icon: "🥢",
+        inputs: {},
+        outputs: { sticks: 0.01 },
+        produces_per_min: 0,
+        produces_unit: "sticks/min",
+        effective_rate: 0,
+        can_produce: false,
+        reason: "no_workers",
+        pending_eta: null,
+        last_report: {
+          status: "inactive",
+          reason: "inactive",
+          detail: null,
+          consumed: {},
+          produced: {},
+        },
+        cycle_time: 1,
+      },
+      {
+        id: "stone_gathering_tent",
+        type: "stone_gathering_tent",
+        name: "Stone-gathering Tent",
+        category: "stone",
+        built: 1,
+        active: 0,
+        capacityPerBuilding: 30,
+        storage: { stone: 30 },
+        cost: { sticks: 4, gold: 2 },
+        icon: "🪨",
+        inputs: {},
+        outputs: { stone: 0.01 },
+        produces_per_min: 0,
+        produces_unit: "stone/min",
         effective_rate: 0,
         can_produce: false,
         reason: "no_workers",
@@ -941,6 +1021,20 @@
     ],
     jobs: [
       { id: "forester", name: "Forester", assigned: 0, max: 10, icon: "🌲" },
+      {
+        id: "stick_gatherer",
+        name: "Stick Gatherer",
+        assigned: 0,
+        max: 3,
+        icon: "🥢",
+      },
+      {
+        id: "stone_gatherer",
+        name: "Stone Gatherer",
+        assigned: 0,
+        max: 3,
+        icon: "🪨",
+      },
     ],
     trade: [
       { id: "gold", label: "Gold", export: 0, import: 0, icon: "🪙" },
@@ -1082,7 +1176,51 @@
   }
 
   function getCapacity(building) {
-    return building.built * building.capacityPerBuilding;
+    const value = Number(building && building.max_workers);
+    return Number.isFinite(value) ? Math.max(0, value) : 0;
+  }
+
+  function getStorageTotals(building) {
+    if (!building || typeof building !== "object") {
+      return new Map();
+    }
+    const storage =
+      building.storage && typeof building.storage === "object"
+        ? building.storage
+        : {};
+    const builtCount = Math.max(0, Number(building.built) || 0);
+    const entries = Object.entries(storage);
+    const totals = new Map();
+    if (entries.length > 0) {
+      entries.forEach(([resource, perBuilding]) => {
+        const amount = Number(perBuilding);
+        const total = Number.isFinite(amount) ? amount * builtCount : 0;
+        totals.set(resource, total);
+      });
+      return totals;
+    }
+
+    const outputKeys =
+      building.outputs && typeof building.outputs === "object"
+        ? Object.keys(building.outputs)
+        : [];
+    if (outputKeys.length === 1) {
+      totals.set(outputKeys[0], 30 * builtCount);
+    }
+    return totals;
+  }
+
+  function formatStorageSummary(building) {
+    const totals = getStorageTotals(building);
+    if (!totals || totals.size === 0) {
+      return "—";
+    }
+    const parts = [];
+    totals.forEach((amount, resource) => {
+      const label = formatResourceKey(resource);
+      parts.push(`${formatInventoryValue(amount)} ${label}`);
+    });
+    return parts.join(", ") || "—";
   }
 
   function getTotalAssigned() {
@@ -1131,16 +1269,7 @@
           }
           break;
         default:
-          if (state.resources[resourceKey] !== undefined) {
-            if (resourceKey === "wood") {
-              const numeric = Number(state.resources[resourceKey]);
-              valueSpan.textContent = Number.isFinite(numeric)
-                ? numeric.toFixed(1).replace(".", ",")
-                : "0,0";
-            } else {
-              valueSpan.textContent = formatAmount(state.resources[resourceKey]);
-            }
-          }
+          valueSpan.textContent = formatInventoryValue(state.resources[resourceKey]);
           break;
       }
     });
@@ -1506,9 +1635,8 @@
     const statRow = document.createElement("div");
     statRow.className = "stat-row";
     const builtStat = createStat("Built");
-    const activeStat = createStat("Active");
-    const capacityStat = createStat("Capacity");
-    statRow.append(builtStat.wrapper, activeStat.wrapper, capacityStat.wrapper);
+    const storageStat = createStat("Storage");
+    statRow.append(builtStat.wrapper, storageStat.wrapper);
 
     const bar = document.createElement("div");
     bar.className = "bar";
@@ -1596,8 +1724,7 @@
       statusContainer,
       statusKey: null,
       builtValue: builtStat.value,
-      activeValue: activeStat.value,
-      capacityValue: capacityStat.value,
+      storageValue: storageStat.value,
       workerInput,
       demolishButton,
       incrementButton,
@@ -1786,22 +1913,33 @@
     }
     const button = entry.buildButton;
     const isPending = button.dataset.state === "pending";
-    let disabled = false;
-    let tooltip = "";
+    const costEntries =
+      building && building.cost && typeof building.cost === "object"
+        ? Object.entries(building.cost)
+        : [];
 
-    if (isWoodcutterBuilding(building)) {
-      const availableWood = getResourceStock("wood");
-      if (!Number.isFinite(availableWood) || availableWood + 1e-9 < 1) {
-        disabled = true;
-        tooltip = "Requires 1 Wood";
+    const parts = [];
+    const missingResources = [];
+    costEntries.forEach(([resource, amount]) => {
+      const normalized = normaliseResourceKey(resource);
+      const displayLabel = formatResourceKey(resource);
+      parts.push(`${formatInventoryValue(amount)} ${displayLabel}`);
+      const stock = getResourceStock(normalized);
+      if (!Number.isFinite(stock) || stock + 1e-9 < Number(amount)) {
+        missingResources.push(displayLabel);
       }
-    }
+    });
 
+    const disabled = missingResources.length > 0 && parts.length > 0;
     if (!isPending) {
       syncAriaDisabled(button, disabled);
     }
 
-    if (tooltip) {
+    if (parts.length > 0) {
+      let tooltip = `Cost: ${parts.join(", ")}`;
+      if (missingResources.length > 0) {
+        tooltip += ` • Missing: ${missingResources.join(", ")}`;
+      }
       button.title = tooltip;
       button.dataset.tooltip = tooltip;
     } else {
@@ -1984,8 +2122,7 @@
     entry.categoryLabel.textContent = building.category;
 
     entry.builtValue.textContent = formatAmount(building.built || 0);
-    entry.activeValue.textContent = formatAmount(building.active || 0);
-    entry.capacityValue.textContent = formatAmount(getCapacity(building));
+    entry.storageValue.textContent = formatStorageSummary(building);
 
     updateWorkerControls(entry, building);
     updateBuildingStatus(entry, building);

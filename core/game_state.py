@@ -72,7 +72,10 @@ class GameState:
 
             now = 0.0
             self.time = {"server_now": float(now), "last_tick": float(now)}
-            self.resources = {"gold": 0.0}
+            starting_gold = float(
+                config.STARTING_RESOURCES.get(Resource.GOLD, 0.0)
+            )
+            self.resources = {"gold": starting_gold}
 
             self.season_clock = SeasonClock(season_modifiers=config.SEASON_MODIFIERS)
             season_name = self.season_clock.get_current_season().lower()
@@ -95,6 +98,7 @@ class GameState:
             Building.reset_ids()
             self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
             self._initialise_inventory()
+            self.resources["gold"] = self.inventory.get_amount(Resource.GOLD)
             self.last_production_reports = {}
             self._active_missing_notifications = {}
 
@@ -186,6 +190,21 @@ class GameState:
             self.worker_pool.register_building(building)
             if assigned > 0:
                 self.worker_pool.set_assignment(building, assigned)
+            self.last_production_reports[building.id] = building.production_report
+
+        for type_key in config.BUILDING_RECIPES.keys():
+            try:
+                building_id = config.resolve_building_public_id(type_key)
+            except ValueError:
+                continue
+            if building_id in self.buildings:
+                continue
+            building = build_from_config(type_key)
+            building.built = 0
+            building.enabled = False
+            building.assigned_workers = 0
+            self.buildings[building.id] = building
+            self.worker_pool.register_building(building)
             self.last_production_reports[building.id] = building.production_report
 
     def add_notification(self, message: str) -> None:
@@ -295,10 +314,10 @@ class GameState:
             self.last_production_reports[building.id] = report
             self._update_missing_input_notifications(building, report, active_missing)
         self._cleanup_missing_notifications(active_missing)
-        produced_wood = self._apply_wood_tick(seconds)
+        wood_result = self._apply_wood_tick(seconds)
         if woodcutter_building is not None:
             wood_state = self.wood_state_snapshot()
-            produced = max(0.0, float(produced_wood))
+            produced = max(0.0, float(wood_result.get("produced", 0.0)))
             max_capacity = float(wood_state["wood_max_capacity"])
             current_wood = float(wood_state["wood"])
             workers_assigned = int(wood_state["workers_assigned_woodcutter"])
@@ -311,6 +330,12 @@ class GameState:
             elif max_capacity > 0 and current_wood >= max_capacity - 1e-9:
                 status = "stalled"
                 reason = "no_capacity"
+            elif wood_result.get("reason") == "missing_input":
+                status = "stalled"
+                reason = "missing_input"
+            elif wood_result.get("reason") == "no_capacity":
+                status = "stalled"
+                reason = "no_capacity"
             elif produced > 0:
                 status = "produced"
                 reason = None
@@ -319,11 +344,16 @@ class GameState:
                 reason = "inactive"
 
             produced_payload = {"wood": produced} if produced > 0 else {}
+            consumed_payload = {}
+            for resource, amount in wood_result.get("consumed", {}).items():
+                if amount > 0 and isinstance(resource, Resource):
+                    consumed_payload[resource.value] = amount
+            detail = wood_result.get("detail") if wood_result.get("reason") else None
             wood_report = {
                 "status": status,
                 "reason": reason,
-                "detail": None,
-                "consumed": {},
+                "detail": detail,
+                "consumed": consumed_payload,
                 "produced": produced_payload,
             }
             woodcutter_building.production_report = dict(wood_report)
@@ -332,7 +362,10 @@ class GameState:
             elif status == "produced":
                 woodcutter_building.status = "ok"
             elif status == "stalled":
-                woodcutter_building.status = "capacidad_llena"
+                if reason == "missing_input":
+                    woodcutter_building.status = "falta_insumos"
+                else:
+                    woodcutter_building.status = "capacidad_llena"
             else:
                 woodcutter_building.status = "pausado"
             self.last_production_reports[woodcutter_building.id] = wood_report
@@ -394,7 +427,7 @@ class GameState:
         self.add_notification(f"Construido {building.name}")
         return building
 
-    def demolish_building(self, building_id: str, refund_rate: float = 0.5) -> Building:
+    def demolish_building(self, building_id: str, refund_rate: float = 0.3) -> Building:
         canonical_id = self._canonical_building_id(building_id)
 
         with self._lock:
@@ -651,39 +684,131 @@ class GameState:
         self.demolish_building(woodcutter.id, refund_rate=0.0)
         return True
 
-    def _apply_wood_tick(self, dt: float) -> float:
+    def _apply_wood_tick(self, dt: float) -> Dict[str, object]:
         seconds = max(0.0, float(dt))
-        produced_amount = 0.0
+        result: Dict[str, object] = {
+            "produced": 0.0,
+            "consumed": {},
+            "effective_workers": 0,
+            "reason": None,
+            "detail": None,
+        }
+
         with self._lock:
             changed = self._recompute_wood_state_locked()
             if seconds <= 0:
                 if changed:
                     self._state_version += 1
-                return produced_amount
+                return result
 
-            if self.wood_production_per_second <= 0 or self.wood_max_capacity <= 0:
+            if self.woodcutter_camps_built <= 0 or self.workers_assigned_woodcutter <= 0:
                 if changed:
                     self._state_version += 1
-                return produced_amount
+                return result
 
-            potential = self.wood_production_per_second * seconds
-            if potential <= 0:
+            wood_recipe = config.BUILDING_RECIPES[config.WOODCUTTER_CAMP]
+            per_worker_outputs = wood_recipe.per_worker_output_rate or {}
+            per_worker_inputs = wood_recipe.per_worker_input_rate or {}
+            output_rate = float(per_worker_outputs.get(Resource.WOOD, 0.0))
+            sticks_rate = float(per_worker_inputs.get(Resource.STICKS, 0.0))
+            stone_rate = float(per_worker_inputs.get(Resource.STONE, 0.0))
+
+            if output_rate <= 0:
                 if changed:
                     self._state_version += 1
-                return produced_amount
+                return result
 
-            current_amount = self.wood
-            new_amount = min(current_amount + potential, self.wood_max_capacity)
-            new_amount = max(0.0, new_amount)
-            if abs(new_amount - current_amount) > 1e-9:
-                produced_amount = max(0.0, new_amount - current_amount)
-                self.wood = new_amount
-                self.inventory.set_amount(Resource.WOOD, new_amount)
-                changed = True
+            workers = max(0, int(self.workers_assigned_woodcutter))
+            sticks_needed = sticks_rate * seconds
+            stone_needed = stone_rate * seconds
+
+            limiting_resource: Optional[Resource] = None
+            effective_workers = workers
+            if sticks_needed > 0:
+                available_sticks = self.inventory.get_amount(Resource.STICKS)
+                possible_sticks = int((available_sticks + 1e-9) / sticks_needed)
+                if possible_sticks < effective_workers:
+                    limiting_resource = Resource.STICKS
+                effective_workers = min(effective_workers, possible_sticks)
+            if stone_needed > 0:
+                available_stone = self.inventory.get_amount(Resource.STONE)
+                possible_stone = int((available_stone + 1e-9) / stone_needed)
+                if possible_stone < effective_workers:
+                    limiting_resource = Resource.STONE
+                effective_workers = min(effective_workers, possible_stone)
+
+            if effective_workers <= 0:
+                result["reason"] = "missing_input"
+                if limiting_resource is not None:
+                    result["detail"] = limiting_resource.value
+                if changed:
+                    self._state_version += 1
+                self.wood_production_per_second = 0.0
+                return result
+
+            consumption: Dict[Resource, float] = {}
+            if sticks_needed > 0:
+                consumption[Resource.STICKS] = sticks_needed * effective_workers
+            if stone_needed > 0:
+                consumption[Resource.STONE] = stone_needed * effective_workers
+
+            reservation = None
+            if consumption:
+                reservation = self.inventory.reserve(consumption)
+                if reservation is None:
+                    result["reason"] = "missing_input"
+                    if limiting_resource is not None:
+                        result["detail"] = limiting_resource.value
+                    if changed:
+                        self._state_version += 1
+                    self.wood_production_per_second = 0.0
+                    return result
+
+            produced_amount = output_rate * effective_workers * seconds
+            if produced_amount <= 0:
+                if reservation:
+                    self.inventory.rollback(reservation)
+                if changed:
+                    self._state_version += 1
+                self.wood_production_per_second = 0.0
+                return result
+
+            if produced_amount > 0 and not self.inventory.can_add({Resource.WOOD: produced_amount}):
+                if reservation:
+                    self.inventory.rollback(reservation)
+                result["reason"] = "no_capacity"
+                if changed:
+                    self._state_version += 1
+                self.wood_production_per_second = 0.0
+                return result
+
+            if reservation:
+                self.inventory.commit(reservation)
+
+            residual = self.inventory.add({Resource.WOOD: produced_amount})
+            if residual:
+                if consumption:
+                    for resource, amount in consumption.items():
+                        self.inventory.set_amount(
+                            resource, self.inventory.get_amount(resource) + amount
+                        )
+                result["reason"] = "no_capacity"
+                if changed:
+                    self._state_version += 1
+                self.wood_production_per_second = 0.0
+                return result
+
+            changed = True
+            self.wood = self.inventory.get_amount(Resource.WOOD)
+            self.wood_production_per_second = output_rate * effective_workers
+            result["produced"] = produced_amount
+            result["effective_workers"] = effective_workers
+            if consumption:
+                result["consumed"] = consumption
 
             if changed:
                 self._state_version += 1
-        return produced_amount
+        return result
 
     def _recompute_wood_state_locked(self) -> bool:
         """Synchronise derived wood values.
@@ -719,7 +844,7 @@ class GameState:
             assigned = 0
         self.workers_assigned_woodcutter = assigned
 
-        capacity = 50.0 * built
+        capacity = 30.0 * built
         current_capacity = self.inventory.get_capacity(Resource.WOOD) or 0.0
         if abs(current_capacity - capacity) > 1e-9:
             self.inventory.set_capacity(Resource.WOOD, capacity)
@@ -735,7 +860,13 @@ class GameState:
             self.inventory.set_amount(Resource.WOOD, 0.0)
         self.wood = current_amount
 
-        rate = assigned * 0.1 if built > 0 else 0.0
+        wood_recipe = config.BUILDING_RECIPES[config.WOODCUTTER_CAMP]
+        per_worker_output = 0.0
+        if wood_recipe.per_worker_output_rate:
+            per_worker_output = float(
+                wood_recipe.per_worker_output_rate.get(Resource.WOOD, 0.0)
+            )
+        rate = assigned * per_worker_output if built > 0 else 0.0
         self.wood_production_per_second = rate
 
         return (

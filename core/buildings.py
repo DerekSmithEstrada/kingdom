@@ -40,6 +40,8 @@ class Building:
 
     @property
     def capacity_per_building(self) -> int:
+        if self.recipe.capacity:
+            return int(next(iter(self.recipe.capacity.values())))
         return int(self.recipe.max_workers)
 
     @property
@@ -74,6 +76,14 @@ class Building:
     @property
     def per_worker_output_rate(self) -> Optional[Mapping[Resource, float]]:
         return self.recipe.per_worker_output_rate
+
+    @property
+    def per_worker_input_rate(self) -> Optional[Mapping[Resource, float]]:
+        return self.recipe.per_worker_input_rate
+
+    @property
+    def storage(self) -> Mapping[Resource, float]:
+        return self.recipe.capacity or {}
 
     def _built_multiplier(self) -> float:
         value = self.built
@@ -163,7 +173,7 @@ class Building:
             return report
 
         if self.per_worker_output_rate:
-            report = self._tick_continuous(dt, inventory, modifiers)
+            report = self._tick_continuous(dt, inventory, notify, modifiers)
             self.production_report = {
                 "status": report.get("status"),
                 "reason": report.get("reason"),
@@ -253,6 +263,7 @@ class Building:
         self,
         dt: float,
         inventory: Inventory,
+        notify,
         modifiers: Mapping[str, float] | float | None,
     ) -> Dict[str, object]:
         report = self._new_report()
@@ -265,22 +276,82 @@ class Building:
             self.cycle_progress = 0.0
             return report
 
-        workers = max(0, self.assigned_workers)
+        workers = max(0, int(self.assigned_workers))
+        per_worker_outputs = self.per_worker_output_rate or {}
+        per_worker_inputs = self.per_worker_input_rate or {}
+
+        if workers <= 0 or not per_worker_outputs:
+            self._apply_inactive_status("inactive")
+            report["status"] = "inactive"
+            report["reason"] = "inactive"
+            self._last_effective_rate = 0.0
+            self.cycle_progress = 0.0
+            return report
+
+        effective_workers = workers
+        limiting_resource: Optional[Resource] = None
+        if per_worker_inputs:
+            for resource, rate in per_worker_inputs.items():
+                required_per_worker = float(rate) * multiplier * dt
+                if required_per_worker <= 0:
+                    continue
+                available = inventory.get_amount(resource)
+                possible_workers = int((available + 1e-9) / required_per_worker)
+                if possible_workers < effective_workers:
+                    limiting_resource = resource
+                effective_workers = min(effective_workers, possible_workers)
+
+        if effective_workers <= 0:
+            detail = (
+                limiting_resource.value if isinstance(limiting_resource, Resource) else "inputs"
+            )
+            self._apply_missing_input_status(detail, notify)
+            report["status"] = "stalled"
+            report["reason"] = "missing_input"
+            report["detail"] = detail
+            report["consumed"] = {}
+            report["produced"] = {}
+            self._last_effective_rate = 0.0
+            self.cycle_progress = 0.0
+            return report
+
+        consumption: Dict[Resource, float] = {}
+        for resource, rate in per_worker_inputs.items():
+            amount = effective_workers * float(rate) * multiplier * dt
+            if amount > 0:
+                consumption[resource] = amount
+
         produced_amounts: Dict[Resource, float] = {}
-        for resource, rate in (self.per_worker_output_rate or {}).items():
-            amount = workers * rate * multiplier * dt
+        for resource, rate in per_worker_outputs.items():
+            amount = effective_workers * float(rate) * multiplier * dt
             if amount > 0:
                 produced_amounts[resource] = amount
+
+        reservation = None
+        if consumption:
+            reservation = inventory.reserve(consumption)
+            if reservation is None:
+                detail = (
+                    limiting_resource.value
+                    if isinstance(limiting_resource, Resource)
+                    else "inputs"
+                )
+                self._apply_missing_input_status(detail, notify)
+                report["status"] = "stalled"
+                report["reason"] = "missing_input"
+                report["detail"] = detail
+                report["consumed"] = {}
+                report["produced"] = {}
+                self._last_effective_rate = 0.0
+                self.cycle_progress = 0.0
+                return report
 
         self._last_effective_rate = multiplier
         self.cycle_progress = 0.0
 
-        if not produced_amounts:
-            report["status"] = "inactive"
-            report["reason"] = "inactive"
-            return report
-
-        if not inventory.can_add(produced_amounts):
+        if produced_amounts and not inventory.can_add(produced_amounts):
+            if reservation:
+                inventory.rollback(reservation)
             self.status = "capacidad_llena"
             report["status"] = "stalled"
             report["reason"] = "no_capacity"
@@ -288,8 +359,14 @@ class Building:
             report["produced"] = {}
             return report
 
+        if reservation:
+            inventory.commit(reservation)
+
         residual = inventory.add(produced_amounts)
         if residual:
+            if consumption:
+                for resource, amount in consumption.items():
+                    inventory.set_amount(resource, inventory.get_amount(resource) + amount)
             self.status = "capacidad_llena"
             report["status"] = "stalled"
             report["reason"] = "no_capacity"
@@ -301,7 +378,7 @@ class Building:
         self._maintenance_notified = False
         report["status"] = "produced"
         report["reason"] = None
-        report["consumed"] = {}
+        report["consumed"] = self._resources_to_payload(consumption)
         report["produced"] = self._resources_to_payload(produced_amounts)
         return report
 
@@ -438,6 +515,7 @@ class Building:
             "workers": self.assigned_workers,
             "max_workers": self.max_workers,
             "capacityPerBuilding": self.capacity_per_building,
+            "storage": {res.value: amt for res, amt in self.storage.items()},
             "inputs": {res.value: amt for res, amt in self.inputs_per_cycle.items()},
             "outputs": {res.value: amt for res, amt in self.outputs_per_cycle.items()},
             "cycle_time": self.cycle_time_sec,
@@ -447,6 +525,10 @@ class Building:
             "status": self.status,
             "enabled": self.enabled,
             "production_report": self.production_report,
+            "cost": {
+                res.value: amt
+                for res, amt in config.BUILD_COSTS.get(self.type_key, {}).items()
+            },
         }
 
     def to_dict(self) -> Dict[str, object]:
