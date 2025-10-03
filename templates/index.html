@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
-<header class="bg-slate-800/80 backdrop-blur border-b border-slate-700">
-  <div class="max-w-6xl mx-auto px-4 py-4">
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-      <h1 class="text-2xl font-semibold tracking-wide">Idle Village Overview</h1>
+<header class="app-header bg-slate-800/80 backdrop-blur border-b border-slate-700">
+  <div class="page-container">
+    <div class="header-row">
+      <h1 class="page-title">Idle Village Overview</h1>
       <div id="season-bar" class="season-bar">
         <span id="season-label" class="season-label">Season</span>
         <div class="season-track" aria-hidden="true">
@@ -11,22 +11,46 @@
         </div>
       </div>
     </div>
-    <div class="grid grid-cols-2 gap-3 mt-4 sm:grid-cols-4 lg:grid-cols-8">
-      <div class="chip" data-resource="happiness">😊 Happiness <span class="value">0%</span></div>
-      <div class="chip" data-resource="population">👤 Population <span class="value">0/20</span></div>
-      <div class="chip" data-resource="gold">🪙 Gold <span class="value">0</span></div>
-      <div class="chip" data-resource="wood">🪵 Wood <span class="value">0,0</span></div>
-      <div class="chip" data-resource="planks">🧱 Planks <span class="value">0</span></div>
-      <div class="chip" data-resource="stone">🪨 Stone <span class="value">0</span></div>
-      <div class="chip" data-resource="tools">🛠️ Tools <span class="value">0</span></div>
-      <div class="chip" data-resource="wheat">🌾 Wheat <span class="value">0</span></div>
+    <div class="resource-grid mt-4">
+      <div class="chip resource-chip" data-resource="happiness">
+        <span class="label">😊 Happiness</span>
+        <span class="value">0%</span>
+      </div>
+      <div class="chip resource-chip" data-resource="population">
+        <span class="label">👤 Population</span>
+        <span class="value">0/20</span>
+      </div>
+      <div class="chip resource-chip" data-resource="gold">
+        <span class="label">🪙 Gold</span>
+        <span class="value">0</span>
+      </div>
+      <div class="chip resource-chip" data-resource="wood">
+        <span class="label">🪵 Wood</span>
+        <span class="value">0,0</span>
+      </div>
+      <div class="chip resource-chip" data-resource="planks">
+        <span class="label">🧱 Planks</span>
+        <span class="value">0</span>
+      </div>
+      <div class="chip resource-chip" data-resource="stone">
+        <span class="label">🪨 Stone</span>
+        <span class="value">0</span>
+      </div>
+      <div class="chip resource-chip" data-resource="tools">
+        <span class="label">🛠️ Tools</span>
+        <span class="value">0</span>
+      </div>
+      <div class="chip resource-chip" data-resource="wheat">
+        <span class="label">🌾 Wheat</span>
+        <span class="value">0</span>
+      </div>
     </div>
   </div>
 </header>
 
 <main class="flex-1">
-  <div class="max-w-6xl mx-auto px-4 py-6">
-    <div class="grid gap-6 lg:grid-cols-3">
+  <div class="page-container">
+    <div class="dashboard-grid">
       <section class="panel" id="buildings">
         <div class="panel-header">
           <h2 class="panel-title">Buildings</h2>
