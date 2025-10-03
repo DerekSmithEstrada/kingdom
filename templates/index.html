@@ -54,7 +54,153 @@
 
 <main class="flex-1">
   <div class="page-container">
-    <div class="dashboard-grid">
+    <nav class="view-nav" role="tablist" aria-label="Primary views">
+      <button
+        class="view-tab is-active"
+        type="button"
+        id="tab-inventory"
+        role="tab"
+        aria-selected="true"
+        aria-controls="view-inventory"
+        data-view-tab="inventory"
+      >
+        Inventory
+      </button>
+      <button
+        class="view-tab"
+        type="button"
+        id="tab-buildings"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-buildings"
+        data-view-tab="buildings"
+      >
+        Buildings
+      </button>
+      <button
+        class="view-tab"
+        type="button"
+        id="tab-jobs"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-jobs"
+        data-view-tab="jobs"
+      >
+        Jobs
+      </button>
+      <button
+        class="view-tab"
+        type="button"
+        id="tab-trades"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-trades"
+        data-view-tab="trades"
+      >
+        Trades
+      </button>
+      <button
+        class="view-tab"
+        type="button"
+        id="tab-production"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-production"
+        data-view-tab="production"
+      >
+        Production tree
+      </button>
+      <button
+        class="view-tab"
+        type="button"
+        id="tab-research"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-research"
+        data-view-tab="research"
+      >
+        Research
+      </button>
+      <button
+        class="view-tab"
+        type="button"
+        id="tab-stats"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-stats"
+        data-view-tab="stats"
+      >
+        Stats / Logs
+      </button>
+      <button
+        class="view-tab"
+        type="button"
+        id="tab-village"
+        role="tab"
+        aria-selected="false"
+        aria-controls="view-village"
+        data-view-tab="village"
+      >
+        Village design
+      </button>
+    </nav>
+
+    <section
+      id="view-inventory"
+      class="view-panel is-active"
+      role="tabpanel"
+      aria-labelledby="tab-inventory"
+      data-view-panel="inventory"
+    >
+      <header class="panel panel--inventory">
+        <div class="panel-header">
+          <h2 class="panel-title">Village Inventory</h2>
+        </div>
+        <div class="inventory-grid">
+          <article class="inventory-card" data-resource="population">
+            <h3 class="inventory-card__label">Population</h3>
+            <p class="inventory-card__value" data-inventory-value>0/0</p>
+          </article>
+          <article class="inventory-card" data-resource="gold">
+            <h3 class="inventory-card__label">Gold</h3>
+            <p class="inventory-card__value" data-inventory-value>0</p>
+          </article>
+          <article class="inventory-card" data-resource="wood">
+            <h3 class="inventory-card__label">Wood</h3>
+            <p class="inventory-card__value" data-inventory-value>0</p>
+          </article>
+          <article class="inventory-card" data-resource="sticks">
+            <h3 class="inventory-card__label">Sticks</h3>
+            <p class="inventory-card__value" data-inventory-value>0</p>
+          </article>
+          <article class="inventory-card" data-resource="planks">
+            <h3 class="inventory-card__label">Planks</h3>
+            <p class="inventory-card__value" data-inventory-value>0</p>
+          </article>
+          <article class="inventory-card" data-resource="stone">
+            <h3 class="inventory-card__label">Stone</h3>
+            <p class="inventory-card__value" data-inventory-value>0</p>
+          </article>
+          <article class="inventory-card" data-resource="tools">
+            <h3 class="inventory-card__label">Tools</h3>
+            <p class="inventory-card__value" data-inventory-value>0</p>
+          </article>
+          <article class="inventory-card" data-resource="wheat">
+            <h3 class="inventory-card__label">Wheat</h3>
+            <p class="inventory-card__value" data-inventory-value>0</p>
+          </article>
+        </div>
+      </header>
+    </section>
+
+    <section
+      id="view-buildings"
+      class="view-panel"
+      role="tabpanel"
+      aria-labelledby="tab-buildings"
+      data-view-panel="buildings"
+      hidden
+    >
       <section class="panel" id="buildings">
         <div class="panel-header">
           <h2 class="panel-title">Buildings</h2>
@@ -97,7 +243,16 @@
           </div>
         </div>
       </section>
+    </section>
 
+    <section
+      id="view-jobs"
+      class="view-panel"
+      role="tabpanel"
+      aria-labelledby="tab-jobs"
+      data-view-panel="jobs"
+      hidden
+    >
       <section class="panel" id="jobs">
         <div class="panel-header justify-between">
           <div>
@@ -119,7 +274,16 @@
           <!-- Jobs rendered by JS -->
         </div>
       </section>
+    </section>
 
+    <section
+      id="view-trades"
+      class="view-panel"
+      role="tabpanel"
+      aria-labelledby="tab-trades"
+      data-view-panel="trades"
+      hidden
+    >
       <section class="panel" id="trade" tabindex="-1">
         <div class="panel-header">
           <h2 class="panel-title">Trade</h2>
@@ -128,7 +292,71 @@
           <!-- Trade rows rendered by JS -->
         </div>
       </section>
-    </div>
+    </section>
+
+    <section
+      id="view-production"
+      class="view-panel"
+      role="tabpanel"
+      aria-labelledby="tab-production"
+      data-view-panel="production"
+      hidden
+    >
+      <section class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Production tree</h2>
+        </div>
+        <p class="placeholder-text">Production tree view coming soon.</p>
+      </section>
+    </section>
+
+    <section
+      id="view-research"
+      class="view-panel"
+      role="tabpanel"
+      aria-labelledby="tab-research"
+      data-view-panel="research"
+      hidden
+    >
+      <section class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Research</h2>
+        </div>
+        <p class="placeholder-text">Research upgrades will appear here.</p>
+      </section>
+    </section>
+
+    <section
+      id="view-stats"
+      class="view-panel"
+      role="tabpanel"
+      aria-labelledby="tab-stats"
+      data-view-panel="stats"
+      hidden
+    >
+      <section class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Stats &amp; Logs</h2>
+        </div>
+        <p class="placeholder-text">Game stats and logs will be tracked here.</p>
+      </section>
+    </section>
+
+    <section
+      id="view-village"
+      class="view-panel"
+      role="tabpanel"
+      aria-labelledby="tab-village"
+      data-view-panel="village"
+      hidden
+    >
+      <section class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Village design</h2>
+        </div>
+        <p class="placeholder-text">Village layout visualisation coming soon.</p>
+      </section>
+    </section>
   </div>
 </main>
 {% endblock %}
