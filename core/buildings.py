@@ -33,7 +33,10 @@ class Building:
     # ------------------------------------------------------------------
     @property
     def max_workers(self) -> int:
-        return self.recipe.max_workers
+        built_multiplier = self._built_multiplier()
+        if built_multiplier <= 0:
+            return 0
+        return int(self.recipe.max_workers * built_multiplier)
 
     @property
     def inputs_per_cycle(self) -> Mapping[Resource, float]:
@@ -54,6 +57,37 @@ class Building:
     @property
     def per_worker_output_rate(self) -> Optional[Mapping[Resource, float]]:
         return self.recipe.per_worker_output_rate
+
+    def _built_multiplier(self) -> float:
+        value = self.built
+        if isinstance(value, bool):
+            return 1.0 if value else 0.0
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, numeric)
+
+    def per_minute_output(self) -> Dict[Resource, float]:
+        """Return the theoretical per-minute output for continuous producers."""
+
+        rates: Dict[Resource, float] = {}
+        per_worker = self.per_worker_output_rate
+        if not per_worker:
+            return rates
+
+        workers = max(0, int(self.assigned_workers))
+        if workers <= 0:
+            return rates
+
+        built_multiplier = self._built_multiplier()
+        if built_multiplier <= 0:
+            return rates
+
+        factor = workers * 60.0 * built_multiplier
+        for resource, rate in per_worker.items():
+            rates[resource] = float(rate) * factor
+        return rates
 
     # ------------------------------------------------------------------
     def effective_rate(

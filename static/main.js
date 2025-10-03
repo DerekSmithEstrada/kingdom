@@ -336,6 +336,8 @@
     happiness: "😊",
   };
 
+  const WOODCUTTER_RATE_PER_SECOND = 0.1;
+
   const numberFormatter = new Intl.NumberFormat(undefined, {
     maximumFractionDigits: 2,
     minimumFractionDigits: 0,
@@ -431,6 +433,9 @@
       : Number.isFinite(maxWorkersValue) && maxWorkersValue > 0
       ? maxWorkersValue
       : capacityValue;
+    const perMinuteValue = Number(building.produces_per_min);
+    const producesUnit =
+      typeof building.produces_unit === "string" ? building.produces_unit : null;
     const typeKey =
       typeof building.type === "string"
         ? building.type
@@ -471,6 +476,13 @@
           ? building.capacityPerBuilding
           : 0,
     };
+
+    if (Number.isFinite(perMinuteValue)) {
+      normalised.produces_per_min = perMinuteValue;
+    }
+    if (producesUnit) {
+      normalised.produces_unit = producesUnit;
+    }
 
     return { ...building, ...normalised };
   }
@@ -911,6 +923,8 @@
         icon: "🪓",
         inputs: {},
         outputs: { wood: 0.1 },
+        produces_per_min: 0,
+        produces_unit: "wood/min",
         effective_rate: 0,
         can_produce: false,
         reason: "no_workers",
@@ -1454,7 +1468,7 @@
     empty.textContent = "—";
     values.append(list, empty);
     row.append(label, values);
-    return { row, list, empty };
+    return { row, list, empty, values };
   }
 
   function createBuildingCard(building) {
@@ -1504,6 +1518,11 @@
     ioSection.className = "io-section";
     const consumes = createIoRow("Consumes");
     const produces = createIoRow("Produces");
+    const producesSummary = document.createElement("span");
+    producesSummary.className = "io-summary";
+    producesSummary.hidden = true;
+    producesSummary.dataset.resource = "wood";
+    produces.values.prepend(producesSummary);
     ioSection.append(consumes.row, produces.row);
 
     const actionRow = document.createElement("div");
@@ -1595,6 +1614,8 @@
       producesList: produces.list,
       producesEmpty: produces.empty,
       producesItems: new Map(),
+      producesSummary,
+      buildButton,
       workerFeedback,
     };
   }
@@ -1696,6 +1717,113 @@
         return labelText;
       }
     );
+  }
+
+  function isWoodcutterBuilding(building) {
+    if (!building) {
+      return false;
+    }
+    const candidates = [
+      building.id,
+      building.type,
+      building.type_key,
+      building.typeKey,
+    ];
+    return candidates.some((value) => normaliseKey(value) === "woodcutter_camp");
+  }
+
+  function resolveWoodProductionPerMinute(building) {
+    if (!isWoodcutterBuilding(building)) {
+      return 0;
+    }
+    const provided = Number(building.produces_per_min);
+    if (Number.isFinite(provided)) {
+      return provided;
+    }
+    const builtValue = Number(building.built);
+    const builtCount = Number.isFinite(builtValue)
+      ? Math.max(0, builtValue)
+      : building && building.built
+      ? 1
+      : 0;
+    const workers = getBuildingAssignedWorkers(building);
+    if (workers <= 0 || builtCount <= 0) {
+      return 0;
+    }
+    return builtCount * workers * WOODCUTTER_RATE_PER_SECOND * 60;
+  }
+
+  function formatWoodProductionValue(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return "0";
+    }
+    if (Number.isInteger(numeric)) {
+      return numeric.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    }
+    const rounded = Math.round(numeric * 10) / 10;
+    return rounded.toLocaleString(undefined, {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    });
+  }
+
+  function updateBuildingProductionSummary(entry, building) {
+    if (!entry || !entry.producesSummary) {
+      return;
+    }
+    if (!isWoodcutterBuilding(building)) {
+      entry.producesSummary.hidden = true;
+      entry.producesSummary.textContent = "";
+      entry.producesSummary.removeAttribute("title");
+      return;
+    }
+
+    const perMinute = resolveWoodProductionPerMinute(building);
+    const formatted = formatWoodProductionValue(perMinute);
+    entry.producesSummary.hidden = false;
+    entry.producesSummary.textContent = `Wood: ${formatted}/min`;
+    entry.producesSummary.title = `Wood production per minute: ${formatted}`;
+  }
+
+  function updateBuildButton(entry, building) {
+    if (!entry || !entry.buildButton) {
+      return;
+    }
+    const button = entry.buildButton;
+    const isPending = button.dataset.state === "pending";
+    let disabled = false;
+    let tooltip = "";
+
+    const builtValue = building ? Number(building.built) : 0;
+    const builtCount = Number.isFinite(builtValue) ? builtValue : 0;
+
+    if (isWoodcutterBuilding(building) && builtCount <= 0) {
+      const availableWood = getResourceStock("wood");
+      if (!Number.isFinite(availableWood) || availableWood + 1e-9 < 1) {
+        disabled = true;
+        tooltip = "Requires 1 Wood";
+      }
+    }
+
+    if (builtCount >= 1) {
+      disabled = true;
+      if (!tooltip) {
+        tooltip = "Already built";
+      }
+    }
+
+    if (!isPending) {
+      syncAriaDisabled(button, disabled);
+    }
+
+    if (tooltip) {
+      button.title = tooltip;
+      button.dataset.tooltip = tooltip;
+    } else {
+      button.removeAttribute("title");
+      button.removeAttribute("data-tooltip");
+    }
   }
 
   function updateBuildingStatus(entry, building) {
@@ -1840,6 +1968,8 @@
     updateWorkerControls(entry, building);
     updateBuildingStatus(entry, building);
     updateBuildingIo(entry, building);
+    updateBuildingProductionSummary(entry, building);
+    updateBuildButton(entry, building);
   }
 
   function renderBuildings() {
@@ -2357,6 +2487,74 @@
     updateJobsCount();
   }
 
+  async function buildStructure(buildingId) {
+    const building = findBuildingById(buildingId);
+    const entry = buildingElementMap.get(resolveBuildingElementKey(buildingId));
+    if (entry && entry.buildButton) {
+      entry.buildButton.dataset.state = "pending";
+      syncAriaDisabled(entry.buildButton, true);
+    }
+    if (entry) {
+      setWorkerFeedback(entry, null);
+    }
+
+    const endpoint = `/api/buildings/${encodeURIComponent(buildingId)}/build`;
+    if (typeof fetch !== "function") {
+      if (entry && entry.buildButton) {
+        delete entry.buildButton.dataset.state;
+        updateBuildButton(entry, building || findBuildingById(buildingId));
+      }
+      return false;
+    }
+
+    let payload = null;
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      payload = response ? await response.json() : null;
+    } catch (error) {
+      payload = null;
+    }
+
+    if (!payload || payload.ok !== true) {
+      if (payload && payload.error === "INSUFFICIENT_RESOURCES") {
+        if (entry) {
+          setWorkerFeedback(entry, "Requires 1 Wood", { variant: "warning" });
+        }
+      } else if (entry) {
+        const message =
+          payload && typeof payload.error_message === "string"
+            ? payload.error_message
+            : "Unable to build";
+        setWorkerFeedback(entry, message, { variant: "error" });
+      }
+      if (entry && entry.buildButton) {
+        delete entry.buildButton.dataset.state;
+        updateBuildButton(entry, building || findBuildingById(buildingId));
+      }
+      return false;
+    }
+
+    if (entry) {
+      setWorkerFeedback(entry, null);
+    }
+
+    if (payload.state) {
+      applyPublicState(payload.state);
+    }
+    updateBuildingsFromPayload(payload);
+
+    if (entry && entry.buildButton) {
+      delete entry.buildButton.dataset.state;
+      const latest = findBuildingById(buildingId);
+      updateBuildButton(entry, latest || building);
+    }
+
+    return true;
+  }
+
   async function assignBuildingWorkers(buildingId, requested) {
     const building = findBuildingById(buildingId);
     if (!building) {
@@ -2514,7 +2712,9 @@
     const { action, buildingId } = button.dataset;
     if (!buildingId) return;
     if (action === "build") {
-      adjustBuildingCount(buildingId, 1);
+      event.preventDefault();
+      await buildStructure(buildingId);
+      return;
     } else if (action === "demolish") {
       adjustBuildingCount(buildingId, -1);
     } else if (action === "assign") {
@@ -2780,6 +2980,15 @@
       match.pending_eta = remote.pending_eta;
       match.last_report = remote.last_report;
       match.cycle_time = remote.cycle_time;
+      if (remote.produces_per_min !== undefined) {
+        const perMinute = Number(remote.produces_per_min);
+        if (Number.isFinite(perMinute)) {
+          match.produces_per_min = perMinute;
+        }
+      }
+      if (typeof remote.produces_unit === "string") {
+        match.produces_unit = remote.produces_unit;
+      }
       if (remote.production_report) {
         match.production_report = remote.production_report;
       } else if (remote.last_report) {

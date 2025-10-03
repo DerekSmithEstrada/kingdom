@@ -21,6 +21,14 @@ from .trade import TradeManager
 logger = logging.getLogger(__name__)
 
 
+class InsufficientResourcesError(Exception):
+    """Raised when an action cannot be performed due to missing resources."""
+
+    def __init__(self, requirements: Mapping[Resource, float]):
+        self.requirements = dict(requirements)
+        super().__init__("INSUFFICIENT_RESOURCES")
+
+
 class GameState:
     """Central storage for all mutable game data."""
 
@@ -172,15 +180,30 @@ class GameState:
     def build_building(self, type_key: str) -> Building:
         if type_key not in config.BUILDING_RECIPES:
             raise ValueError(f"Tipo de edificio desconocido: {type_key}")
-        cost = config.COSTOS_CONSTRUCCION.get(type_key, {})
-        missing = self._missing_resources(cost)
-        if missing:
-            raise ValueError(missing)
-        if cost:
-            self.inventory.consume(cost)
-        building = build_from_config(type_key)
-        self.buildings[building.id] = building
-        self.worker_pool.register_building(building)
+
+        with self._lock:
+            existing = self.buildings.get(type_key)
+            if existing is not None and bool(existing.built):
+                return existing
+
+            cost = config.BUILD_COSTS.get(type_key, {})
+            if cost and not self.inventory.has(cost):
+                raise InsufficientResourcesError(cost)
+            if cost and not self.inventory.consume(cost):
+                raise InsufficientResourcesError(cost)
+
+            building = existing
+            if building is None:
+                building = build_from_config(type_key)
+                building.built = int(bool(building.built)) or 1
+                self.buildings[building.id] = building
+            else:
+                building.built = int(bool(building.built)) or 1
+                building.enabled = True
+
+            self.worker_pool.register_building(building)
+            self._state_version += 1
+
         self.add_notification(f"Construido {building.name}")
         return building
 
@@ -191,7 +214,7 @@ class GameState:
             raise ValueError("Edificio inexistente")
         refund = {
             resource: amount * refund_rate
-            for resource, amount in config.COSTOS_CONSTRUCCION.get(building.type_key, {}).items()
+            for resource, amount in config.BUILD_COSTS.get(building.type_key, {}).items()
         }
         if refund:
             self.inventory.add(refund)
@@ -493,6 +516,15 @@ class GameState:
                 "modifiers_applied": modifier_payload,
             }
         )
+        per_minute_output = building.per_minute_output()
+        if per_minute_output:
+            snapshot["per_minute_output"] = {
+                resource.value: amount for resource, amount in per_minute_output.items()
+            }
+            wood_rate = per_minute_output.get(Resource.WOOD)
+            if wood_rate is not None:
+                snapshot["produces_per_min"] = float(wood_rate)
+                snapshot["produces_unit"] = "wood/min"
         return snapshot
 
     def _building_last_report(self, building: Building) -> Dict[str, object]:
