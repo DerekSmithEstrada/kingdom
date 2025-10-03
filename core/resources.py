@@ -9,6 +9,7 @@ class Resource(str, Enum):
     """Enumeration of all resource keys used in the game."""
 
     WOOD = "WOOD"
+    STICKS = "STICKS"
     STONE = "STONE"
     GRAIN = "GRAIN"
     PLANK = "PLANK"
@@ -22,6 +23,7 @@ class Resource(str, Enum):
 
 ALL_RESOURCES: List[Resource] = [
     Resource.WOOD,
+    Resource.STICKS,
     Resource.STONE,
     Resource.GRAIN,
     Resource.PLANK,

@@ -14,6 +14,8 @@ LUMBER_HUT = "lumber_hut"
 MINER = "miner"
 FARMER = "farmer"
 ARTISAN = "artisan"
+STICK_GATHERING_TENT = "stick_gathering_tent"
+STONE_GATHERING_TENT = "stone_gathering_tent"
 
 BUILDING_PUBLIC_IDS: Dict[str, str] = {
     WOODCUTTER_CAMP: "woodcutter_camp",
@@ -21,6 +23,8 @@ BUILDING_PUBLIC_IDS: Dict[str, str] = {
     MINER: "miner",
     FARMER: "farmer",
     ARTISAN: "artisan",
+    STICK_GATHERING_TENT: "stick_gathering_tent",
+    STONE_GATHERING_TENT: "stone_gathering_tent",
 }
 
 _BUILDING_ID_LOOKUP: Dict[str, str] = {
@@ -60,10 +64,18 @@ BUILDING_NAMES: Dict[str, str] = {
     MINER: "Miner",
     FARMER: "Farmer",
     ARTISAN: "Artisan Workshop",
+    STICK_GATHERING_TENT: "Stick-gathering Tent",
+    STONE_GATHERING_TENT: "Stone-gathering Tent",
 }
 
 BUILD_COSTS: Dict[str, Dict[Resource, float]] = {
-    WOODCUTTER_CAMP: {Resource.WOOD: 1},
+    WOODCUTTER_CAMP: {
+        Resource.STICKS: 30,
+        Resource.STONE: 20,
+        Resource.GOLD: 10,
+    },
+    STICK_GATHERING_TENT: {Resource.STICKS: 4, Resource.GOLD: 1},
+    STONE_GATHERING_TENT: {Resource.STICKS: 4, Resource.GOLD: 2},
     LUMBER_HUT: {},
     MINER: {},
     FARMER: {},
@@ -84,6 +96,7 @@ class BuildingRecipe:
     capacity: Optional[Mapping[Resource, float]] = None
     maintenance: Mapping[Resource, float] = field(default_factory=dict)
     per_worker_output_rate: Optional[Mapping[Resource, float]] = None
+    per_worker_input_rate: Optional[Mapping[Resource, float]] = None
 
 
 def _recipe(
@@ -95,6 +108,7 @@ def _recipe(
     capacity: Mapping[Resource, float] | None = None,
     maintenance: Mapping[Resource, float] | None = None,
     per_worker_output_rate: Mapping[Resource, float] | None = None,
+    per_worker_input_rate: Mapping[Resource, float] | None = None,
 ) -> BuildingRecipe:
     return BuildingRecipe(
         inputs=normalise_mapping(inputs or {}),
@@ -106,18 +120,43 @@ def _recipe(
         per_worker_output_rate=None
         if per_worker_output_rate is None
         else normalise_mapping(per_worker_output_rate),
+        per_worker_input_rate=None
+        if per_worker_input_rate is None
+        else normalise_mapping(per_worker_input_rate),
     )
 
 
 BUILDING_RECIPES: Dict[str, BuildingRecipe] = {
     WOODCUTTER_CAMP: _recipe(
-        # Extractive: 0.1 Wood per worker per second without inputs.
         inputs={},
-        outputs={Resource.WOOD: 0.1},
+        outputs={},
         cycle_time=1.0,
         max_workers=2,
         maintenance={},
-        per_worker_output_rate={Resource.WOOD: 0.1},
+        per_worker_output_rate={Resource.WOOD: 0.01},
+        per_worker_input_rate={
+            Resource.STICKS: 0.04,
+            Resource.STONE: 0.04,
+        },
+        capacity={Resource.WOOD: 30},
+    ),
+    STICK_GATHERING_TENT: _recipe(
+        inputs={},
+        outputs={},
+        cycle_time=1.0,
+        max_workers=3,
+        maintenance={},
+        per_worker_output_rate={Resource.STICKS: 0.01},
+        capacity={Resource.STICKS: 30},
+    ),
+    STONE_GATHERING_TENT: _recipe(
+        inputs={},
+        outputs={},
+        cycle_time=1.0,
+        max_workers=3,
+        maintenance={},
+        per_worker_output_rate={Resource.STONE: 0.01},
+        capacity={Resource.STONE: 30},
     ),
     LUMBER_HUT: _recipe(
         # 2 Wood -> 1 Plank per 4s cycle; halved throughput if input missing.
@@ -155,6 +194,7 @@ BUILDING_RECIPES: Dict[str, BuildingRecipe] = {
 
 TRADE_DEFAULTS: Dict[Resource, Dict[str, float | str]] = {
     Resource.WOOD: {"mode": "pause", "rate": 0.0, "price": 1.0},
+    Resource.STICKS: {"mode": "pause", "rate": 0.0, "price": 0.5},
     Resource.STONE: {"mode": "pause", "rate": 0.0, "price": 1.5},
     Resource.ORE: {"mode": "pause", "rate": 0.0, "price": 2.5},
     Resource.GRAIN: {"mode": "pause", "rate": 0.0, "price": 2.0},
@@ -168,6 +208,7 @@ TRADE_DEFAULTS: Dict[Resource, Dict[str, float | str]] = {
 
 CAPACIDADES: Dict[Resource, float] = {
     Resource.WOOD: 500,
+    Resource.STICKS: 500,
     Resource.STONE: 500,
     Resource.ORE: 200,
     Resource.GRAIN: 400,
@@ -180,17 +221,32 @@ CAPACIDADES: Dict[Resource, float] = {
 }
 
 # Population configuration
-POPULATION_INITIAL: int = 2
+POPULATION_INITIAL: int = 4
 POPULATION_CAPACITY: int = 20
 
 WORKERS_INICIALES: int = POPULATION_INITIAL
 
-STARTING_RESOURCES: Dict[Resource, float] = {resource: 0.0 for resource in ALL_RESOURCES}
+STARTING_RESOURCES: Dict[Resource, float] = {
+    resource: 0.0 for resource in ALL_RESOURCES
+}
+STARTING_RESOURCES[Resource.GOLD] = 10.0
 
 STARTING_BUILDINGS: Tuple[Mapping[str, object], ...] = (
     {
         "type": WOODCUTTER_CAMP,
-        "workers": 1,
+        "workers": 0,
+        "built": True,
+        "enabled": True,
+    },
+    {
+        "type": STICK_GATHERING_TENT,
+        "workers": 0,
+        "built": True,
+        "enabled": True,
+    },
+    {
+        "type": STONE_GATHERING_TENT,
+        "workers": 0,
         "built": True,
         "enabled": True,
     },
