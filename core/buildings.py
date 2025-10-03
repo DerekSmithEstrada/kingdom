@@ -101,7 +101,7 @@ class Building:
         if built_multiplier <= 0:
             return rates
 
-        factor = workers * 60.0 * built_multiplier
+        factor = workers * 60.0
         for resource, rate in per_worker.items():
             rates[resource] = float(rate) * factor
         return rates

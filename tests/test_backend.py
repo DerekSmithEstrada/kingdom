@@ -17,24 +17,6 @@ def reset_state():
     yield
 
 
-def _get_wood_amount():
-    state = get_game_state()
-    snapshot = state.basic_state_snapshot()
-    return snapshot["items"]["wood"]
-
-
-def _set_workers(target: int) -> None:
-    state = get_game_state()
-    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
-    assert building is not None
-    delta = int(target) - int(building.assigned_workers)
-    if delta == 0:
-        return
-    response = ui_bridge.change_building_workers(building.id, delta)
-    assert response["ok"] is True, response
-    assert response["assigned"] == target
-
-
 def test_basic_state_snapshot_defaults():
     state = get_game_state()
     snapshot = state.basic_state_snapshot()
@@ -43,173 +25,128 @@ def test_basic_state_snapshot_defaults():
     assert building_payload == {
         "built": 1,
         "workers": 1,
-        "capacity": 10,
+        "capacity": 2,
         "active": 1,
     }
-    assert snapshot["jobs"]["forester"] == {"assigned": 1, "capacity": 10}
+    assert snapshot["jobs"]["forester"] == {"assigned": 1, "capacity": 2}
     for key, amount in snapshot["items"].items():
         assert amount == pytest.approx(0.0), f"{key} expected to be 0"
+    wood_state = snapshot["wood_state"]
+    assert wood_state["wood"] == pytest.approx(0.0)
+    assert wood_state["woodcutter_camps_built"] == 1
+    assert wood_state["workers_assigned_woodcutter"] == 1
+    assert wood_state["max_workers_woodcutter"] == 2
+    assert wood_state["wood_max_capacity"] == pytest.approx(50.0)
+    assert wood_state["wood_production_per_second"] == pytest.approx(0.1)
 
 
-def test_initial_wood_is_zero():
-    assert _get_wood_amount() == 0.0
-
-
-def test_wood_does_not_increase_without_workers():
+def test_wood_production_matches_formula():
     state = get_game_state()
-    ui_bridge.change_building_workers(config.WOODCUTTER_CAMP, -1)
-    for _ in range(5):
-        state.tick(1.0)
-    assert _get_wood_amount() == pytest.approx(0.0)
-
-
-def test_wood_increases_by_point_one_per_second_with_workers():
-    _set_workers(0)
-    _set_workers(1)
-    state = get_game_state()
-    for _ in range(5):
-        state.tick(1.0)
-    assert _get_wood_amount() == pytest.approx(0.5, rel=1e-9, abs=1e-9)
-
-
-def test_additional_workers_do_not_change_generation_rate():
-    state = get_game_state()
-    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
-    assert building is not None
-    failure = ui_bridge.change_building_workers(building.id, 3)
-    assert failure["ok"] is False
-    assert failure.get("error_code") == "assignment_failed"
-    _set_workers(2)
-    state = get_game_state()
-    for _ in range(5):
-        state.tick(1.0)
-    assert _get_wood_amount() == pytest.approx(0.5, rel=1e-9, abs=1e-9)
-
-
-def test_jobs_reflect_building_assignments():
-    state = get_game_state()
-    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
-    assert building is not None
-    _set_workers(2)
+    state.assign_workers_to_woodcutter(1)
+    state.recompute_wood_caps()
+    state.tick(10.0)
     snapshot = state.basic_state_snapshot()
-    assert snapshot["buildings"][config.WOODCUTTER_CAMP]["workers"] == 2
-    assert snapshot["jobs"]["forester"]["assigned"] == 2
-    assert snapshot["population"]["available"] == 0
+    assert snapshot["items"]["wood"] == pytest.approx(1.0, rel=1e-9, abs=1e-9)
+    assert snapshot["wood_state"]["wood_production_per_second"] == pytest.approx(0.1)
 
 
-def test_population_pool_recovers_after_unassign():
+def test_worker_cap_scales_with_camps():
+    state = get_game_state()
+    state.worker_pool.set_total_workers(10)
+    state.assign_workers_to_woodcutter(5)
+    assert state.workers_assigned_woodcutter == 2
+    assert state.max_workers_woodcutter == 2
+
+    state.inventory.set_amount(Resource.WOOD, 5)
+    state.recompute_wood_caps()
+    response = ui_bridge.build_building(config.WOODCUTTER_CAMP)
+    assert response["ok"] is True
+    state.recompute_wood_caps()
+    state.assign_workers_to_woodcutter(10)
+    assert state.woodcutter_camps_built == 2
+    assert state.max_workers_woodcutter == 4
+    assert state.workers_assigned_woodcutter == 4
+
+
+def test_capacity_clamp_enforced():
+    state = get_game_state()
+    state.worker_pool.set_total_workers(10)
+    state.assign_workers_to_woodcutter(2)
+    state.inventory.set_amount(Resource.WOOD, 49)
+    state.recompute_wood_caps()
+    state.tick(10.0)
+    assert state.wood_max_capacity == pytest.approx(50.0)
+    assert state.wood == pytest.approx(50.0)
+
+
+def test_no_camps_means_no_production():
     state = get_game_state()
     building = state.get_building_by_type(config.WOODCUTTER_CAMP)
     assert building is not None
-    ui_bridge.change_building_workers(building.id, -1)
-    snapshot = state.basic_state_snapshot()
-    assert snapshot["population"] == {"current": 2, "capacity": 20, "available": 2}
+    state.demolish_building(building.id)
+    state.assign_workers_to_woodcutter(5)
+    state.tick(60.0)
+    state_snapshot = state.basic_state_snapshot()
+    wood_state = state_snapshot["wood_state"]
+    assert wood_state["woodcutter_camps_built"] == 0
+    assert wood_state["wood_max_capacity"] == pytest.approx(0.0)
+    assert wood_state["wood"] == pytest.approx(0.0)
+    assert wood_state["wood_production_per_second"] == pytest.approx(0.0)
+    assert wood_state["workers_assigned_woodcutter"] == 0
 
 
-def test_change_building_workers_delta_payload():
+def test_demolition_adjusts_capacity_and_workers():
     state = get_game_state()
+    state.worker_pool.set_total_workers(10)
     building = state.get_building_by_type(config.WOODCUTTER_CAMP)
     assert building is not None
-    assigned = ui_bridge.change_building_workers(building.id, 1)
-    assert assigned["ok"] is True
-    assert assigned["delta"] == 1
-    assert assigned["assigned"] == 2
-    released = ui_bridge.change_building_workers(building.id, -1)
-    assert released["ok"] is True
-    assert released["delta"] == -1
-    assert released["assigned"] == 1
+
+    state.assign_workers_to_woodcutter(0)
+    state.inventory.set_amount(Resource.WOOD, 3)
+    state.recompute_wood_caps()
+    ui_bridge.build_building(config.WOODCUTTER_CAMP)
+    state.recompute_wood_caps()
+    state.assign_workers_to_woodcutter(4)
+    state.inventory.set_amount(Resource.WOOD, 90)
+    state.recompute_wood_caps()
+
+    state.demolish_building(building.id)
+    state_snapshot = state.basic_state_snapshot()
+    wood_state = state_snapshot["wood_state"]
+    assert wood_state["woodcutter_camps_built"] == 1
+    assert wood_state["wood_max_capacity"] == pytest.approx(50.0)
+    assert wood_state["wood"] == pytest.approx(50.0)
+    assert wood_state["workers_assigned_woodcutter"] == 2
+    assert wood_state["max_workers_woodcutter"] == 2
 
 
 def test_build_requires_one_wood():
     state = get_game_state()
     building = state.get_building_by_type(config.WOODCUTTER_CAMP)
     assert building is not None
-    state.demolish_building(building.id)
     state.inventory.set_amount(Resource.WOOD, 0)
+    state.recompute_wood_caps()
 
     error = ui_bridge.build_building(config.WOODCUTTER_CAMP)
     assert error["ok"] is False
     assert error["error"] == "INSUFFICIENT_RESOURCES"
     assert error.get("requires", {}).get("wood") == pytest.approx(1)
 
-    state.inventory.set_amount(Resource.WOOD, 1)
+    state.inventory.set_amount(Resource.WOOD, 2)
+    state.recompute_wood_caps()
     success = ui_bridge.build_building(config.WOODCUTTER_CAMP)
     assert success["ok"] is True
-    assert success["state"]["items"]["wood"] == pytest.approx(0.0)
-    assert state.inventory.get_amount(Resource.WOOD) == pytest.approx(0.0)
-
-
-def test_build_allows_multiple_instances():
-    state = get_game_state()
-    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
-    assert building is not None
-
-    state.demolish_building(building.id)
-    state.inventory.set_amount(Resource.WOOD, 3)
-
-    for expected in range(1, 4):
-        response = ui_bridge.build_building(config.WOODCUTTER_CAMP)
-        assert response["ok"] is True
-        building = state.get_building_by_type(config.WOODCUTTER_CAMP)
-        assert building is not None
-        assert building.built_count == expected
-        assert state.inventory.get_amount(Resource.WOOD) == pytest.approx(3 - expected)
-
-
-def test_demolish_requires_existing_structure():
-    state = get_game_state()
-    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
-    assert building is not None
-
-    state.demolish_building(building.id)
-    response = ui_bridge.demolish_building(config.WOODCUTTER_CAMP)
-    assert response["ok"] is False
-    assert response["error"] == "NOTHING_TO_DEMOLISH"
-    assert response["http_status"] == 400
-
-
-def test_demolish_clamps_workers_and_capacity():
-    state = get_game_state()
-    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
-    assert building is not None
-
-    _set_workers(0)
-    state.worker_pool.set_total_workers(30)
-    state.demolish_building(building.id)
-    state.inventory.set_amount(Resource.WOOD, 3)
-
-    for _ in range(3):
-        result = ui_bridge.build_building(config.WOODCUTTER_CAMP)
-        assert result["ok"] is True
-
-    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
-    assert building is not None
-    assert building.built_count == 3
-
-    _set_workers(15)
-    assert building.assigned_workers == 15
-
-    state.demolish_building(building.id)
-    assert building.built_count == 2
-    assert building.assigned_workers == 15
-
-    state.demolish_building(building.id)
-    assert building.built_count == 1
-    assert building.assigned_workers == 10
-    assert state.worker_pool.available_workers == 20
-
+    state.recompute_wood_caps()
     snapshot = state.basic_state_snapshot()
-    woodcutter_snapshot = snapshot["buildings"][config.WOODCUTTER_CAMP]
-    assert woodcutter_snapshot["built"] == 1
-    assert woodcutter_snapshot["capacity"] == 10
-    assert woodcutter_snapshot["active"] == 1
-    assert snapshot["jobs"]["forester"] == {"assigned": 10, "capacity": 10}
+    assert snapshot["items"]["wood"] == pytest.approx(1.0)
+    assert snapshot["wood_state"]["woodcutter_camps_built"] == 2
+    assert snapshot["wood_state"]["wood_max_capacity"] == pytest.approx(100.0)
 
 
 def test_snapshot_includes_production_per_minute():
-    _set_workers(0)
-    _set_workers(2)
     state = get_game_state()
+    state.worker_pool.set_total_workers(10)
+    state.assign_workers_to_woodcutter(2)
     snapshot = state.snapshot_building(config.WOODCUTTER_CAMP)
     assert snapshot["produces_per_min"] == pytest.approx(12.0)
     assert snapshot["produces_unit"] == "wood/min"

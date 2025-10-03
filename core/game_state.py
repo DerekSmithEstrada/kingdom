@@ -40,13 +40,17 @@ class GameState:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._wood_tick_residual = 0.0
-        self._wood_tick_anchor: Optional[float] = None
         self._tick_count = 0
         self._state_version = 0
         self.notifications: Deque[str] = deque(maxlen=config.NOTIFICATION_QUEUE_LIMIT)
         self.last_production_reports: Dict[str, Dict[str, object]] = {}
         self._active_missing_notifications: Dict[Tuple[str, Resource], str] = {}
+        self.wood: float = 0.0
+        self.woodcutter_camps_built: int = 0
+        self.workers_assigned_woodcutter: int = 0
+        self.max_workers_woodcutter: int = 0
+        self.wood_max_capacity: float = 0.0
+        self.wood_production_per_second: float = 0.0
         self._initialise_state()
 
     # ------------------------------------------------------------------
@@ -61,8 +65,6 @@ class GameState:
 
     def _initialise_state(self) -> None:
         with self._lock:
-            self._wood_tick_residual = 0.0
-            self._wood_tick_anchor = None
             self._tick_count = 0
             self._state_version = 0
             self.notifications.clear()
@@ -80,6 +82,13 @@ class GameState:
             self.last_production_reports = {}
             self._active_missing_notifications = {}
             self._initialise_starting_buildings()
+            self.wood = 0.0
+            self.woodcutter_camps_built = 0
+            self.workers_assigned_woodcutter = 0
+            self.max_workers_woodcutter = 0
+            self.wood_max_capacity = 0.0
+            self.wood_production_per_second = 0.0
+            self.recompute_wood_caps()
 
     # ------------------------------------------------------------------
     def _initialise_inventory(self) -> None:
@@ -173,21 +182,64 @@ class GameState:
 
     # ------------------------------------------------------------------
     def tick(self, dt: float) -> None:
-        wood_baseline = self.inventory.get_amount(Resource.WOOD)
-        self.season_clock.update(dt)
+        seconds = max(0.0, float(dt))
+        self.season_clock.update(seconds)
         self._sync_season_state()
 
-        self.trade_manager.tick(dt, self.inventory, self.add_notification)
+        self.trade_manager.tick(seconds, self.inventory, self.add_notification)
 
         self.last_production_reports = {}
         active_missing: Set[Tuple[str, Resource]] = set()
+        woodcutter_building = self.get_building_by_type(config.WOODCUTTER_CAMP)
         for building in list(self.buildings.values()):
+            if woodcutter_building is not None and building.id == woodcutter_building.id:
+                continue
             modifiers = self.get_production_modifiers(building)
-            report = building.tick(dt, self.inventory, self.add_notification, modifiers)
+            report = building.tick(seconds, self.inventory, self.add_notification, modifiers)
             self.last_production_reports[building.id] = report
             self._update_missing_input_notifications(building, report, active_missing)
         self._cleanup_missing_notifications(active_missing)
-        self._apply_simple_resource_tick(dt, wood_baseline)
+        produced_wood = self._apply_wood_tick(seconds)
+        if woodcutter_building is not None:
+            wood_state = self.wood_state_snapshot()
+            produced = max(0.0, float(produced_wood))
+            max_capacity = float(wood_state["wood_max_capacity"])
+            current_wood = float(wood_state["wood"])
+            workers_assigned = int(wood_state["workers_assigned_woodcutter"])
+            if wood_state["woodcutter_camps_built"] <= 0:
+                status = "inactive"
+                reason = "inactive"
+            elif workers_assigned <= 0:
+                status = "inactive"
+                reason = "no_workers"
+            elif max_capacity > 0 and current_wood >= max_capacity - 1e-9:
+                status = "stalled"
+                reason = "no_capacity"
+            elif produced > 0:
+                status = "produced"
+                reason = None
+            else:
+                status = "inactive"
+                reason = "inactive"
+
+            produced_payload = {"wood": produced} if produced > 0 else {}
+            wood_report = {
+                "status": status,
+                "reason": reason,
+                "detail": None,
+                "consumed": {},
+                "produced": produced_payload,
+            }
+            woodcutter_building.production_report = dict(wood_report)
+            if wood_state["woodcutter_camps_built"] <= 0:
+                woodcutter_building.status = "no_construido"
+            elif status == "produced":
+                woodcutter_building.status = "ok"
+            elif status == "stalled":
+                woodcutter_building.status = "capacidad_llena"
+            else:
+                woodcutter_building.status = "pausado"
+            self.last_production_reports[woodcutter_building.id] = wood_report
         with self._lock:
             self._tick_count += 1
             if self._tick_count % 5 == 0:
@@ -238,6 +290,9 @@ class GameState:
             if building.assigned_workers > max_workers:
                 building.assigned_workers = max_workers
 
+            if building.type_key == config.WOODCUTTER_CAMP:
+                self._recompute_wood_state_locked()
+
             self._state_version += 1
 
         self.add_notification(f"Construido {building.name}")
@@ -263,14 +318,23 @@ class GameState:
             if building.assigned_workers > max_workers:
                 building.assigned_workers = max_workers
 
-            refund = {
-                resource: amount * refund_rate
-                for resource, amount in config.BUILD_COSTS.get(building.type_key, {}).items()
-            }
+            effective_refund_rate = refund_rate
+            if building.type_key == config.WOODCUTTER_CAMP:
+                effective_refund_rate = 0.0
+
+            if effective_refund_rate > 0:
+                refund = {
+                    resource: amount * effective_refund_rate
+                    for resource, amount in config.BUILD_COSTS.get(building.type_key, {}).items()
+                }
+            else:
+                refund = {}
             if refund:
                 self.inventory.add(refund)
 
             self.worker_pool.register_building(building)
+            if building.type_key == config.WOODCUTTER_CAMP:
+                self._recompute_wood_state_locked()
             self._state_version += 1
 
         self.add_notification(f"{building.name} demolido")
@@ -328,7 +392,11 @@ class GameState:
                 removed = self.worker_pool.unassign_workers(building, abs(change))
                 applied = -removed
 
-            if applied != 0:
+            wood_changed = False
+            if building.type_key == config.WOODCUTTER_CAMP:
+                wood_changed = self._recompute_wood_state_locked()
+
+            if applied != 0 or wood_changed:
                 self._state_version += 1
 
             return {
@@ -358,6 +426,20 @@ class GameState:
                 return building
         return None
 
+    def wood_state_snapshot(self) -> Dict[str, object]:
+        with self._lock:
+            return self._wood_state_payload_unlocked()
+
+    def _wood_state_payload_unlocked(self) -> Dict[str, object]:
+        return {
+            "wood": float(self.wood),
+            "woodcutter_camps_built": int(self.woodcutter_camps_built),
+            "workers_assigned_woodcutter": int(self.workers_assigned_woodcutter),
+            "max_workers_woodcutter": int(self.max_workers_woodcutter),
+            "wood_max_capacity": float(self.wood_max_capacity),
+            "wood_production_per_second": float(self.wood_production_per_second),
+        }
+
     def basic_state_snapshot(self) -> Dict[str, object]:
         with self._lock:
             items = {
@@ -369,6 +451,7 @@ class GameState:
             woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
             population = self.population_snapshot()
             version = int(self._state_version)
+            wood_state = self._wood_state_payload_unlocked()
 
             if woodcutter is None:
                 built = 0
@@ -398,6 +481,7 @@ class GameState:
             "jobs": {"forester": jobs_payload},
             "population": population,
             "version": version,
+            "wood_state": wood_state,
         }
 
         snapshot.update(self.response_metadata(version))
@@ -420,45 +504,152 @@ class GameState:
             "version": version_value,
         }
 
-    def _apply_simple_resource_tick(self, dt: float, baseline: float) -> None:
-        if dt is None:
-            return
-        seconds = float(dt)
-        if seconds <= 0:
-            return
-        with self._lock:
-            if self._wood_tick_anchor is None:
-                self._wood_tick_anchor = round(float(baseline), 1)
-                self.inventory.set_amount(Resource.WOOD, self._wood_tick_anchor)
-            self._wood_tick_residual += seconds
-            whole_seconds = int(self._wood_tick_residual)
-            if whole_seconds <= 0:
-                return
-            self._wood_tick_residual -= whole_seconds
-            current = self._wood_tick_anchor
-            state_changed = False
-            for _ in range(whole_seconds):
-                next_value = self._increment_wood_locked(current)
-                if next_value != current:
-                    state_changed = True
-                current = next_value
-            self._wood_tick_anchor = current
-            self.inventory.set_amount(Resource.WOOD, current)
-            if state_changed:
-                self._state_version += 1
-            if self._wood_tick_residual <= 1e-9:
-                self._wood_tick_residual = 0.0
-                self._wood_tick_anchor = None
+    def game_tick(self, dt_seconds: float) -> None:
+        """Alias for :meth:`tick` matching the wood subsystem naming."""
 
-    def _increment_wood_locked(self, current: float) -> float:
+        self.tick(dt_seconds)
+
+    def assign_workers_to_woodcutter(self, number: int) -> int:
+        """Assign workers to the woodcutter ensuring clamps are respected."""
+
+        with self._lock:
+            initial_change = self._recompute_wood_state_locked()
+            woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
+            current_assigned = 0 if woodcutter is None else max(0, int(woodcutter.assigned_workers))
+            max_assignable = current_assigned + self.worker_pool.available_workers
+            target = max(0, int(number))
+            target = min(target, self.max_workers_woodcutter, max_assignable)
+
+            if woodcutter is None or self.woodcutter_camps_built <= 0:
+                target = 0
+            if woodcutter is not None:
+                self.worker_pool.set_assignment(woodcutter, target)
+
+            changed = self._recompute_wood_state_locked() or initial_change
+            if changed:
+                self._state_version += 1
+            return self.workers_assigned_woodcutter
+
+    def recompute_wood_caps(self) -> None:
+        """Recalculate wood capacity and worker clamps."""
+
+        with self._lock:
+            if self._recompute_wood_state_locked():
+                self._state_version += 1
+
+    def build_woodcutter_camp(self) -> bool:
+        """Attempt to build a woodcutter camp respecting the wood cost."""
+
+        try:
+            self.build_building(config.WOODCUTTER_CAMP)
+            return True
+        except InsufficientResourcesError:
+            return False
+
+    def demolish_woodcutter_camp(self) -> bool:
+        """Demolish a woodcutter camp if present."""
+
         woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
-        if (
-            woodcutter
-            and woodcutter.built
-            and woodcutter.assigned_workers >= 1
-        ):
-            current += 0.1
-        return round(current, 1)
+        if woodcutter is None or woodcutter.built_count <= 0:
+            return False
+        self.demolish_building(woodcutter.id, refund_rate=0.0)
+        return True
+
+    def _apply_wood_tick(self, dt: float) -> float:
+        seconds = max(0.0, float(dt))
+        produced_amount = 0.0
+        with self._lock:
+            changed = self._recompute_wood_state_locked()
+            if seconds <= 0:
+                if changed:
+                    self._state_version += 1
+                return produced_amount
+
+            if self.wood_production_per_second <= 0 or self.wood_max_capacity <= 0:
+                if changed:
+                    self._state_version += 1
+                return produced_amount
+
+            potential = self.wood_production_per_second * seconds
+            if potential <= 0:
+                if changed:
+                    self._state_version += 1
+                return produced_amount
+
+            current_amount = self.wood
+            new_amount = min(current_amount + potential, self.wood_max_capacity)
+            new_amount = max(0.0, new_amount)
+            if abs(new_amount - current_amount) > 1e-9:
+                produced_amount = max(0.0, new_amount - current_amount)
+                self.wood = new_amount
+                self.inventory.set_amount(Resource.WOOD, new_amount)
+                changed = True
+
+            if changed:
+                self._state_version += 1
+        return produced_amount
+
+    def _recompute_wood_state_locked(self) -> bool:
+        """Synchronise derived wood values.
+
+        Returns ``True`` when any of the tracked values changed as part of the
+        recomputation. Callers are responsible for bumping the state version when
+        ``True`` is returned.
+        """
+
+        woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
+        previous_built = self.woodcutter_camps_built
+        previous_workers = self.workers_assigned_woodcutter
+        previous_capacity = self.wood_max_capacity
+        previous_max_workers = self.max_workers_woodcutter
+        previous_wood = self.wood
+        previous_rate = self.wood_production_per_second
+
+        built = woodcutter.built_count if woodcutter else 0
+        built = max(0, int(built))
+        self.woodcutter_camps_built = built
+
+        max_workers = built * 2
+        self.max_workers_woodcutter = max_workers
+
+        assigned = max(0, int(woodcutter.assigned_workers)) if woodcutter else 0
+        if assigned > max_workers:
+            assigned = max_workers
+            if woodcutter:
+                woodcutter.assigned_workers = assigned
+        if built == 0:
+            if woodcutter and woodcutter.assigned_workers != 0:
+                woodcutter.assigned_workers = 0
+            assigned = 0
+        self.workers_assigned_woodcutter = assigned
+
+        capacity = 50.0 * built
+        current_capacity = self.inventory.get_capacity(Resource.WOOD) or 0.0
+        if abs(current_capacity - capacity) > 1e-9:
+            self.inventory.set_capacity(Resource.WOOD, capacity)
+        self.wood_max_capacity = capacity
+
+        current_amount = max(0.0, self.inventory.get_amount(Resource.WOOD))
+        limit = capacity
+        if current_amount > limit + 1e-9:
+            current_amount = limit
+            self.inventory.set_amount(Resource.WOOD, current_amount)
+        if built == 0 and current_amount > 0.0:
+            current_amount = 0.0
+            self.inventory.set_amount(Resource.WOOD, 0.0)
+        self.wood = current_amount
+
+        rate = assigned * 0.1 if built > 0 else 0.0
+        self.wood_production_per_second = rate
+
+        return (
+            previous_built != self.woodcutter_camps_built
+            or previous_workers != self.workers_assigned_woodcutter
+            or abs(previous_capacity - self.wood_max_capacity) > 1e-9
+            or previous_max_workers != self.max_workers_woodcutter
+            or abs(previous_wood - self.wood) > 1e-9
+            or abs(previous_rate - self.wood_production_per_second) > 1e-9
+        )
 
     # ------------------------------------------------------------------
     def snapshot_hud(self) -> Dict[str, object]:
@@ -497,6 +688,7 @@ class GameState:
             "trade": self.snapshot_trade(),
             "notifications": self.list_notifications(),
             "population": self.population_snapshot(),
+            "wood_state": self.wood_state_snapshot(),
             "version": version,
         }
 

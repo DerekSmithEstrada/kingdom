@@ -115,7 +115,7 @@ BUILDING_RECIPES: Dict[str, BuildingRecipe] = {
         inputs={},
         outputs={Resource.WOOD: 0.1},
         cycle_time=1.0,
-        max_workers=10,
+        max_workers=2,
         maintenance={},
         per_worker_output_rate={Resource.WOOD: 0.1},
     ),
