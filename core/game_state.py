@@ -1,58 +1,73 @@
-"""Core singleton storing all game state."""
+"""Core game state implementing the stacked building system."""
 
 from __future__ import annotations
 
-import logging
-import uuid
-from datetime import datetime, timezone
-from collections import deque
+from collections import defaultdict
 import threading
-from typing import Deque, Dict, List, Mapping, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional
 
-from . import config
-from .buildings import Building, build_from_config
-from .inventory import Inventory
-from .jobs import WorkerPool
-from .resources import ALL_RESOURCES, Resource
-from .seasons import SEASON_GRANTS
-from .timeclock import SeasonClock
-from .trade import TradeManager
-
-
-logger = logging.getLogger(__name__)
+from .building_catalog import load_default_catalog
+from .building_models import (
+    BuildingInstance,
+    BuildingType,
+    InstanceReport,
+    StackReport,
+)
+from .resource_ledger import ResourceLedger
 
 
-class InsufficientResourcesError(Exception):
-    """Raised when an action cannot be performed due to missing resources."""
+DEFAULT_STARTING_RESOURCES: Dict[str, float] = {
+    "wood": 200.0,
+    "tools": 40.0,
+    "planks": 120.0,
+    "stone": 80.0,
+    "wheat": 120.0,
+    "water": 120.0,
+    "hops": 60.0,
+    "iron": 80.0,
+    "coal": 80.0,
+    "flour": 60.0,
+}
 
-    def __init__(self, requirements: Mapping[Resource, float]):
-        self.requirements = dict(requirements)
+DEFAULT_TOTAL_WORKERS = 40
+DEFAULT_REFUND_RATIO = 0.6
+
+
+class GameStateError(Exception):
+    """Base class for game state errors."""
+
+
+class InsufficientResourcesError(GameStateError):
+    def __init__(self, missing: Mapping[str, float]):
+        self.missing = dict(missing)
         super().__init__("INSUFFICIENT_RESOURCES")
 
 
-class NothingToDemolishError(Exception):
-    """Raised when attempting to demolish an unbuilt structure."""
+class InstanceNotFoundError(GameStateError):
+    pass
+
+
+class BuildingOperationError(GameStateError):
+    pass
 
 
 class GameState:
-    """Central storage for all mutable game data."""
+    """Singleton-like state container for the stacked system."""
 
     _instance: Optional["GameState"] = None
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._tick_count = 0
-        self._state_version = 0
-        self.notifications: Deque[str] = deque(maxlen=config.NOTIFICATION_QUEUE_LIMIT)
-        self.last_production_reports: Dict[str, Dict[str, object]] = {}
-        self._active_missing_notifications: Dict[Tuple[str, Resource], str] = {}
-        self.wood: float = 0.0
-        self.woodcutter_camps_built: int = 0
-        self.workers_assigned_woodcutter: int = 0
-        self.max_workers_woodcutter: int = 0
-        self.wood_max_capacity: float = 0.0
-        self.wood_production_per_second: float = 0.0
-        self._initialise_state()
+        self.catalog: Dict[str, BuildingType] = {}
+        self.inventory = ResourceLedger()
+        self.instances_by_type: Dict[str, List[BuildingInstance]] = {}
+        self.instances: Dict[str, BuildingInstance] = {}
+        self.stack_reports: Dict[str, StackReport] = {}
+        self._next_instance_id = 1
+        self.time = 0.0
+        self.workers_total = DEFAULT_TOTAL_WORKERS
+        self.workers_free = DEFAULT_TOTAL_WORKERS
+        self.reset()
 
     # ------------------------------------------------------------------
     @classmethod
@@ -62,1086 +77,440 @@ class GameState:
         return cls._instance
 
     def reset(self) -> None:
-        self._initialise_state()
-
-    def _initialise_state(self) -> None:
         with self._lock:
-            self._tick_count = 0
-            self._state_version = 0
-            self.notifications.clear()
-
-            now = 0.0
-            self.time = {"server_now": float(now), "last_tick": float(now)}
-            starting_gold = float(
-                config.STARTING_RESOURCES.get(Resource.GOLD, 0.0)
-            )
-            self.resources = {"gold": starting_gold}
-
-            self.season_clock = SeasonClock(season_modifiers=config.SEASON_MODIFIERS)
-            season_name = self.season_clock.get_current_season().lower()
-            self.season = {"current": season_name, "last_change_at": float(now)}
-
-            self.population_capacity = int(config.POPULATION_CAPACITY)
-            self.population = {
-                "total": 0,
-                "cap": self.population_capacity,
-                "villagers": [],
-            }
-            self._next_villager_id = 1
-
-            self.inventory = Inventory()
-            self.inventory.set_notifier(self.add_notification)
-
-            self.population_current = 0
-            self.worker_pool = WorkerPool(0)
-            self.buildings: Dict[str, Building] = {}
-            Building.reset_ids()
-            self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
-            self._initialise_inventory()
-            self.resources["gold"] = self.inventory.get_amount(Resource.GOLD)
-            self.last_production_reports = {}
-            self._active_missing_notifications = {}
-
-            self._grant_new_villagers(int(config.POPULATION_INITIAL))
-            self._initialise_starting_buildings()
-            self.wood = 0.0
-            self.woodcutter_camps_built = 0
-            self.workers_assigned_woodcutter = 0
-            self.max_workers_woodcutter = 0
-            self.wood_max_capacity = 0.0
-            self.wood_production_per_second = 0.0
-            self.recompute_wood_caps()
-            self._sync_season_state()
+            self.catalog = load_default_catalog()
+            self.inventory = ResourceLedger(DEFAULT_STARTING_RESOURCES)
+            self.instances_by_type = {type_id: [] for type_id in self.catalog.keys()}
+            self.instances = {}
+            self.stack_reports = {}
+            self._next_instance_id = 1
+            self.time = 0.0
+            self.workers_total = DEFAULT_TOTAL_WORKERS
+            self.workers_free = DEFAULT_TOTAL_WORKERS
+            for type_id in self.catalog:
+                self._compute_stack_report(type_id, 0.0)
 
     # ------------------------------------------------------------------
-    def _initialise_inventory(self) -> None:
-        for resource in ALL_RESOURCES:
-            amount = config.STARTING_RESOURCES.get(resource, 0.0)
-            self.inventory.set_amount(resource, float(amount))
-            capacity = config.CAPACIDADES.get(resource)
-            if capacity is not None:
-                self.inventory.set_capacity(resource, float(capacity))
-
-    @staticmethod
-    def _normalise_built_value(value: object, *, default: int = 0) -> int:
-        if value is None:
-            return max(0, int(default))
-        if isinstance(value, bool):
-            return 1 if value else 0
-        if isinstance(value, (int, float)):
-            return max(0, int(value))
-        if isinstance(value, str):
-            try:
-                numeric = float(value)
-            except ValueError:
-                return 1 if value.strip() else max(0, int(default))
-            return max(0, int(numeric))
-        return 1 if bool(value) else 0
-
-    def _initialise_starting_buildings(self) -> None:
-        for entry in config.STARTING_BUILDINGS:
-            type_key: Optional[str] = None
-            workers = 0
-            enabled = True
-            built_value: object = None
-
-            if isinstance(entry, Mapping):
-                raw_type = entry.get("type")
-                if isinstance(raw_type, str):
-                    type_key = raw_type
-                if "workers" in entry:
-                    try:
-                        workers = int(entry.get("workers", 0))
-                    except (TypeError, ValueError):
-                        workers = 0
-                if "enabled" in entry:
-                    enabled = bool(entry.get("enabled", True))
-                built_value = entry.get("built") if "built" in entry else None
-            elif isinstance(entry, (tuple, list)) and entry:
-                raw_type = entry[0]
-                if isinstance(raw_type, str):
-                    type_key = raw_type
-                if len(entry) > 1:
-                    try:
-                        workers = int(entry[1])
-                    except (TypeError, ValueError):
-                        workers = 0
-                if len(entry) > 2:
-                    built_value = entry[2]
-            elif isinstance(entry, str):
-                type_key = entry
-                built_value = None
-
-            if not type_key or type_key not in config.BUILDING_RECIPES:
-                continue
-
-            building = build_from_config(type_key)
-            building.enabled = enabled
-            built_count = self._normalise_built_value(
-                built_value,
-                default=1 if enabled else 0,
-            )
-            building.built = built_count
-            if built_count <= 0:
-                building.enabled = False
-            assigned = max(0, min(int(workers), building.max_workers))
-            building.assigned_workers = assigned
-            self.buildings[building.id] = building
-            self.worker_pool.register_building(building)
-            if assigned > 0:
-                self.worker_pool.set_assignment(building, assigned)
-            self.last_production_reports[building.id] = building.production_report
-
-        for type_key in config.BUILDING_RECIPES.keys():
-            try:
-                building_id = config.resolve_building_public_id(type_key)
-            except ValueError:
-                continue
-            if building_id in self.buildings:
-                continue
-            building = build_from_config(type_key)
-            building.built = 0
-            building.enabled = False
-            building.assigned_workers = 0
-            self.buildings[building.id] = building
-            self.worker_pool.register_building(building)
-            self.last_production_reports[building.id] = building.production_report
-
-    def add_notification(self, message: str) -> None:
-        self.notifications.append(message)
-
-    def consume_notification(self) -> Optional[str]:
-        if not self.notifications:
-            return None
-        return self.notifications.popleft()
-
-    def list_notifications(self) -> List[str]:
-        return list(self.notifications)
-
-    # ------------------------------------------------------------------
-    def tick(self, t_now: float) -> None:
-        with self._lock:
-            t_now = float(t_now)
-            last_tick = float(self.time.get("last_tick", 0.0))
-            if t_now < last_tick:
-                t_now = last_tick
-            dt = max(0.0, t_now - last_tick)
-
-            self.time["server_now"] = max(self.time.get("server_now", t_now), t_now)
-
-            income = self.population_total() * 0.01 * dt
-            if income != 0:
-                self.resources["gold"] += income
-                self.inventory.add({Resource.GOLD: income})
-
-            self._process_tick(dt)
-
-            self.time["last_tick"] = t_now
-            self.time["server_now"] = max(self.time.get("server_now", t_now), t_now)
-
-    def advance_time(self, dt: float) -> None:
-        dt_seconds = max(0.0, float(dt))
-        with self._lock:
-            base_time = float(self.time.get("last_tick", 0.0))
-        self.tick(base_time + dt_seconds)
-
-    def population_total(self) -> int:
-        with self._lock:
-            villagers = self.population.get("villagers", [])
-            return len(villagers)
-
-    def _update_population_totals_locked(self) -> None:
-        total = len(self.population.get("villagers", []))
-        cap = int(self.population.get("cap", self.population_capacity))
-        self.population["total"] = total
-        self.population["cap"] = cap
-        self.population_current = total
-        self.population_capacity = cap
-        if hasattr(self, "worker_pool") and self.worker_pool is not None:
-            self.worker_pool.set_total_workers(total)
-
-    def _grant_new_villagers(self, amount: int) -> int:
-        with self._lock:
-            requested = max(0, int(amount))
-            cap = int(self.population.get("cap", self.population_capacity))
-            free_slots = max(0, cap - len(self.population.get("villagers", [])))
-            to_add = max(0, min(requested, free_slots))
-            for _ in range(to_add):
-                villager = {
-                    "id": self._next_villager_id,
-                    "employed": False,
-                    "job_id": None,
-                }
-                self.population["villagers"].append(villager)
-                self._next_villager_id += 1
-            self._update_population_totals_locked()
-            return to_add
-
-    def on_season_start(self, new_season: str, at: float) -> None:
-        normalized = str(new_season or "").strip().lower()
-        if normalized not in SEASON_GRANTS:
-            raise ValueError(f"Unknown season: {new_season}")
-        timestamp = float(at)
-        with self._lock:
-            current = self.season.get("current")
-            last_change = float(self.season.get("last_change_at", timestamp))
-            if current == normalized and last_change == timestamp:
-                return
-
-            self.season["current"] = normalized
-            self.season["last_change_at"] = timestamp
-            self.time["server_now"] = max(self.time.get("server_now", timestamp), timestamp)
-
-            added = self._grant_new_villagers(SEASON_GRANTS[normalized])
-            if added > 0:
-                self._state_version += 1
-
-    def _process_tick(self, dt: float) -> None:
-        seconds = max(0.0, float(dt))
-        self.season_clock.update(seconds)
-        self._sync_season_state()
-
-        self.trade_manager.tick(seconds, self.inventory, self.add_notification)
-
-        self.last_production_reports = {}
-        active_missing: Set[Tuple[str, Resource]] = set()
-        woodcutter_building = self.get_building_by_type(config.WOODCUTTER_CAMP)
-        for building in list(self.buildings.values()):
-            if woodcutter_building is not None and building.id == woodcutter_building.id:
-                continue
-            modifiers = self.get_production_modifiers(building)
-            report = building.tick(seconds, self.inventory, self.add_notification, modifiers)
-            self.last_production_reports[building.id] = report
-            self._update_missing_input_notifications(building, report, active_missing)
-        self._cleanup_missing_notifications(active_missing)
-        wood_result = self._apply_wood_tick(seconds)
-        if woodcutter_building is not None:
-            wood_state = self.wood_state_snapshot()
-            produced = max(0.0, float(wood_result.get("produced", 0.0)))
-            max_capacity = float(wood_state["wood_max_capacity"])
-            current_wood = float(wood_state["wood"])
-            workers_assigned = int(wood_state["workers_assigned_woodcutter"])
-            if wood_state["woodcutter_camps_built"] <= 0:
-                status = "inactive"
-                reason = "inactive"
-            elif workers_assigned <= 0:
-                status = "inactive"
-                reason = "no_workers"
-            elif max_capacity > 0 and current_wood >= max_capacity - 1e-9:
-                status = "stalled"
-                reason = "no_capacity"
-            elif wood_result.get("reason") == "missing_input":
-                status = "stalled"
-                reason = "missing_input"
-            elif wood_result.get("reason") == "no_capacity":
-                status = "stalled"
-                reason = "no_capacity"
-            elif produced > 0:
-                status = "produced"
-                reason = None
-            else:
-                status = "inactive"
-                reason = "inactive"
-
-            produced_payload = {"wood": produced} if produced > 0 else {}
-            consumed_payload = {}
-            for resource, amount in wood_result.get("consumed", {}).items():
-                if amount > 0 and isinstance(resource, Resource):
-                    consumed_payload[resource.value] = amount
-            detail = wood_result.get("detail") if wood_result.get("reason") else None
-            wood_report = {
-                "status": status,
-                "reason": reason,
-                "detail": detail,
-                "consumed": consumed_payload,
-                "produced": produced_payload,
-            }
-            woodcutter_building.production_report = dict(wood_report)
-            if wood_state["woodcutter_camps_built"] <= 0:
-                woodcutter_building.status = "no_construido"
-            elif status == "produced":
-                woodcutter_building.status = "ok"
-            elif status == "stalled":
-                if reason == "missing_input":
-                    woodcutter_building.status = "falta_insumos"
-                else:
-                    woodcutter_building.status = "capacidad_llena"
-            else:
-                woodcutter_building.status = "pausado"
-            self.last_production_reports[woodcutter_building.id] = wood_report
-        with self._lock:
-            self._tick_count += 1
-            if self._tick_count % 5 == 0:
-                wood_amount = self.inventory.get_amount(Resource.WOOD)
-                woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
-                workers = woodcutter.assigned_workers if woodcutter else 0
-                built = woodcutter.built_count if woodcutter else 0
-                logger.debug(
-                    "Tick %s summary: wood=%.1f built=%s workers=%s",
-                    self._tick_count,
-                    round(wood_amount, 1),
-                    built,
-                    workers,
-                )
-
-    def get_production_modifiers(self, building: Building) -> Dict[str, float]:
-        return self.season_clock.get_modifiers(building.type_key)
-
-    # ------------------------------------------------------------------
-    def build_building(self, type_key: str) -> Building:
-        if type_key not in config.BUILDING_RECIPES:
-            raise ValueError(f"Tipo de edificio desconocido: {type_key}")
-
-        canonical_id = config.resolve_building_public_id(type_key)
-
-        with self._lock:
-            building = self.buildings.get(canonical_id)
-
-            cost = config.BUILD_COSTS.get(type_key, {})
-            if cost and not self.inventory.has(cost):
-                raise InsufficientResourcesError(cost)
-            if cost and not self.inventory.consume(cost):
-                raise InsufficientResourcesError(cost)
-
-            if building is None:
-                building = build_from_config(type_key)
-                building.built = 0
-                building.assigned_workers = max(0, int(building.assigned_workers))
-                self.buildings[building.id] = building
-                self.last_production_reports[building.id] = building.production_report
-
-            self.worker_pool.register_building(building)
-
-            building.built = building.built_count + 1
-            building.enabled = True
-
-            max_workers = building.max_workers
-            if building.assigned_workers > max_workers:
-                building.assigned_workers = max_workers
-
-            if building.type_key == config.WOODCUTTER_CAMP:
-                self._recompute_wood_state_locked()
-
-            self._state_version += 1
-
-        self.add_notification(f"Construido {building.name}")
-        return building
-
-    def demolish_building(self, building_id: str, refund_rate: float = 0.3) -> Building:
-        canonical_id = self._canonical_building_id(building_id)
-
-        with self._lock:
-            building = self.buildings.get(canonical_id)
-            if building is None:
-                raise ValueError("Edificio inexistente")
-
-            built_count = building.built_count
-            if built_count <= 0:
-                raise NothingToDemolishError("NOTHING_TO_DEMOLISH")
-
-            building.built = built_count - 1
-            if building.built <= 0:
-                building.enabled = False
-
-            max_workers = building.max_workers
-            if building.assigned_workers > max_workers:
-                building.assigned_workers = max_workers
-
-            effective_refund_rate = refund_rate
-            if building.type_key == config.WOODCUTTER_CAMP:
-                effective_refund_rate = 0.0
-
-            if effective_refund_rate > 0:
-                refund = {
-                    resource: amount * effective_refund_rate
-                    for resource, amount in config.BUILD_COSTS.get(building.type_key, {}).items()
-                }
-            else:
-                refund = {}
-            if refund:
-                self.inventory.add(refund)
-
-            self.worker_pool.register_building(building)
-            if building.type_key == config.WOODCUTTER_CAMP:
-                self._recompute_wood_state_locked()
-            self._state_version += 1
-
-        self.add_notification(f"{building.name} demolido")
-        return building
-
-    def toggle_building(self, building_id: str, enabled: bool) -> None:
-        canonical_id = self._canonical_building_id(building_id)
-        building = self.buildings.get(canonical_id)
-        if building is None:
-            raise ValueError("Edificio inexistente")
-        building.enabled = enabled
-        if not enabled:
-            building.status = "pausado"
-        self.add_notification(
-            f"{building.name} {'activado' if enabled else 'desactivado'}"
-        )
-
-    # ------------------------------------------------------------------
-    def _missing_resources(self, cost: Dict[Resource, float]) -> str:
-        for resource, required in cost.items():
-            available = self.inventory.get_amount(resource)
-            if available + 1e-9 < required:
-                return (
-                    f"Falta {resource.value}: {available:.1f}/{required:.1f}"
-                )
-        return ""
-
-    def _canonical_building_id(self, building_id: str) -> str:
-        try:
-            return config.resolve_building_public_id(building_id)
-        except ValueError as exc:  # pragma: no cover - error path exercised via API
-            raise ValueError("Edificio inexistente") from exc
-
-    # ------------------------------------------------------------------
-    def apply_worker_delta(self, building_id: str, delta: int) -> Dict[str, int]:
-        with self._lock:
-            canonical_id = self._canonical_building_id(building_id)
-            building = self.buildings.get(canonical_id)
-            if building is None:
-                raise ValueError("Edificio inexistente")
-
-            change = int(delta)
-            if change == 0:
-                return {
-                    "before": int(building.assigned_workers),
-                    "delta": 0,
-                    "assigned": int(building.assigned_workers),
-                }
-
-            before = int(building.assigned_workers)
-
-            if change > 0:
-                applied = self.worker_pool.assign_workers(building, change)
-            else:
-                removed = self.worker_pool.unassign_workers(building, abs(change))
-                applied = -removed
-
-            wood_changed = False
-            if building.type_key == config.WOODCUTTER_CAMP:
-                wood_changed = self._recompute_wood_state_locked()
-
-            if applied != 0 or wood_changed:
-                self._state_version += 1
-
-            return {
-                "before": before,
-                "delta": int(applied),
-                "assigned": int(building.assigned_workers),
-            }
-
-    def assign_workers(self, building_id: str, number: int) -> int:
-        result = self.apply_worker_delta(building_id, number)
-        return max(0, result["delta"])
-
-    def unassign_workers(self, building_id: str, number: int) -> int:
-        result = self.apply_worker_delta(building_id, -number)
-        return abs(min(0, result["delta"]))
-
-    def get_building(self, building_id: str) -> Optional[Building]:
-        try:
-            canonical_id = self._canonical_building_id(building_id)
-        except ValueError:
-            return None
-        return self.buildings.get(canonical_id)
-
-    def get_building_by_type(self, type_key: str) -> Optional[Building]:
-        for building in self.buildings.values():
-            if building.type_key == type_key:
-                return building
-        return None
-
-    def wood_state_snapshot(self) -> Dict[str, object]:
-        with self._lock:
-            return self._wood_state_payload_unlocked()
-
-    def _wood_state_payload_unlocked(self) -> Dict[str, object]:
-        return {
-            "wood": float(self.wood),
-            "woodcutter_camps_built": int(self.woodcutter_camps_built),
-            "workers_assigned_woodcutter": int(self.workers_assigned_woodcutter),
-            "max_workers_woodcutter": int(self.max_workers_woodcutter),
-            "wood_max_capacity": float(self.wood_max_capacity),
-            "wood_production_per_second": float(self.wood_production_per_second),
-        }
-
-    def basic_state_snapshot(self) -> Dict[str, object]:
-        with self._lock:
-            items = {
-                resource.value.lower(): round(
-                    self.inventory.get_amount(resource), 1
-                )
-                for resource in ALL_RESOURCES
-            }
-            woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
-            population = self.population_snapshot()
-            version = int(self._state_version)
-            wood_state = self._wood_state_payload_unlocked()
-
-            if woodcutter is None:
-                built = 0
-                workers = 0
-                total_capacity = 0
-            else:
-                built = woodcutter.built_count
-                workers = max(0, int(woodcutter.assigned_workers))
-                total_capacity = int(woodcutter.max_workers)
-
-        active_workers = min(workers, built) if built > 0 else 0
-        jobs_payload = {
-            "assigned": workers,
-            "capacity": total_capacity,
-        }
-
-        snapshot = {
-            "items": items,
-            "buildings": {
-                config.WOODCUTTER_CAMP: {
-                    "built": built,
-                    "workers": workers,
-                    "capacity": total_capacity,
-                    "active": active_workers,
-                }
-            },
-            "jobs": {"forester": jobs_payload},
-            "population": population,
-            "version": version,
-            "wood_state": wood_state,
-        }
-
-        snapshot.update(self.response_metadata(version))
-        return snapshot
-
-    def response_metadata(self, version: Optional[int] = None) -> Dict[str, object]:
-        if version is None:
-            with self._lock:
-                version_value = int(self._state_version)
-        else:
-            version_value = int(version)
-        timestamp = (
-            datetime.now(timezone.utc)
-            .isoformat(timespec="milliseconds")
-            .replace("+00:00", "Z")
-        )
-        return {
-            "request_id": uuid.uuid4().hex,
-            "server_time": timestamp,
-            "version": version_value,
-        }
-
-    def game_tick(self, dt_seconds: float) -> None:
-        """Alias for :meth:`tick` matching the wood subsystem naming."""
-
-        self.advance_time(dt_seconds)
-
-    def assign_workers_to_woodcutter(self, number: int) -> int:
-        """Assign workers to the woodcutter ensuring clamps are respected."""
-
-        with self._lock:
-            initial_change = self._recompute_wood_state_locked()
-            woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
-            current_assigned = 0 if woodcutter is None else max(0, int(woodcutter.assigned_workers))
-            max_assignable = current_assigned + self.worker_pool.available_workers
-            target = max(0, int(number))
-            target = min(target, self.max_workers_woodcutter, max_assignable)
-
-            if woodcutter is None or self.woodcutter_camps_built <= 0:
-                target = 0
-            if woodcutter is not None:
-                self.worker_pool.set_assignment(woodcutter, target)
-
-            changed = self._recompute_wood_state_locked() or initial_change
-            if changed:
-                self._state_version += 1
-            return self.workers_assigned_woodcutter
-
-    def recompute_wood_caps(self) -> None:
-        """Recalculate wood capacity and worker clamps."""
-
-        with self._lock:
-            if self._recompute_wood_state_locked():
-                self._state_version += 1
-
-    def build_woodcutter_camp(self) -> bool:
-        """Attempt to build a woodcutter camp respecting the wood cost."""
-
-        try:
-            self.build_building(config.WOODCUTTER_CAMP)
-            return True
-        except InsufficientResourcesError:
-            return False
-
-    def demolish_woodcutter_camp(self) -> bool:
-        """Demolish a woodcutter camp if present."""
-
-        woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
-        if woodcutter is None or woodcutter.built_count <= 0:
-            return False
-        self.demolish_building(woodcutter.id, refund_rate=0.0)
-        return True
-
-    def _apply_wood_tick(self, dt: float) -> Dict[str, object]:
-        seconds = max(0.0, float(dt))
-        result: Dict[str, object] = {
-            "produced": 0.0,
-            "consumed": {},
-            "effective_workers": 0,
-            "reason": None,
-            "detail": None,
-        }
-
-        with self._lock:
-            changed = self._recompute_wood_state_locked()
-            if seconds <= 0:
-                if changed:
-                    self._state_version += 1
-                return result
-
-            if self.woodcutter_camps_built <= 0 or self.workers_assigned_woodcutter <= 0:
-                if changed:
-                    self._state_version += 1
-                return result
-
-            wood_recipe = config.BUILDING_RECIPES[config.WOODCUTTER_CAMP]
-            per_worker_outputs = wood_recipe.per_worker_output_rate or {}
-            per_worker_inputs = wood_recipe.per_worker_input_rate or {}
-            output_rate = float(per_worker_outputs.get(Resource.WOOD, 0.0))
-            sticks_rate = float(per_worker_inputs.get(Resource.STICKS, 0.0))
-            stone_rate = float(per_worker_inputs.get(Resource.STONE, 0.0))
-
-            if output_rate <= 0:
-                if changed:
-                    self._state_version += 1
-                return result
-
-            workers = max(0, int(self.workers_assigned_woodcutter))
-            sticks_needed = sticks_rate * seconds
-            stone_needed = stone_rate * seconds
-
-            limiting_resource: Optional[Resource] = None
-            effective_workers = workers
-            if sticks_needed > 0:
-                available_sticks = self.inventory.get_amount(Resource.STICKS)
-                possible_sticks = int((available_sticks + 1e-9) / sticks_needed)
-                if possible_sticks < effective_workers:
-                    limiting_resource = Resource.STICKS
-                effective_workers = min(effective_workers, possible_sticks)
-            if stone_needed > 0:
-                available_stone = self.inventory.get_amount(Resource.STONE)
-                possible_stone = int((available_stone + 1e-9) / stone_needed)
-                if possible_stone < effective_workers:
-                    limiting_resource = Resource.STONE
-                effective_workers = min(effective_workers, possible_stone)
-
-            if effective_workers <= 0:
-                result["reason"] = "missing_input"
-                if limiting_resource is not None:
-                    result["detail"] = limiting_resource.value
-                if changed:
-                    self._state_version += 1
-                self.wood_production_per_second = 0.0
-                return result
-
-            consumption: Dict[Resource, float] = {}
-            if sticks_needed > 0:
-                consumption[Resource.STICKS] = sticks_needed * effective_workers
-            if stone_needed > 0:
-                consumption[Resource.STONE] = stone_needed * effective_workers
-
-            reservation = None
-            if consumption:
-                reservation = self.inventory.reserve(consumption)
-                if reservation is None:
-                    result["reason"] = "missing_input"
-                    if limiting_resource is not None:
-                        result["detail"] = limiting_resource.value
-                    if changed:
-                        self._state_version += 1
-                    self.wood_production_per_second = 0.0
-                    return result
-
-            produced_amount = output_rate * effective_workers * seconds
-            if produced_amount <= 0:
-                if reservation:
-                    self.inventory.rollback(reservation)
-                if changed:
-                    self._state_version += 1
-                self.wood_production_per_second = 0.0
-                return result
-
-            if produced_amount > 0 and not self.inventory.can_add({Resource.WOOD: produced_amount}):
-                if reservation:
-                    self.inventory.rollback(reservation)
-                result["reason"] = "no_capacity"
-                if changed:
-                    self._state_version += 1
-                self.wood_production_per_second = 0.0
-                return result
-
-            if reservation:
-                self.inventory.commit(reservation)
-
-            residual = self.inventory.add({Resource.WOOD: produced_amount})
-            if residual:
-                if consumption:
-                    for resource, amount in consumption.items():
-                        self.inventory.set_amount(
-                            resource, self.inventory.get_amount(resource) + amount
-                        )
-                result["reason"] = "no_capacity"
-                if changed:
-                    self._state_version += 1
-                self.wood_production_per_second = 0.0
-                return result
-
-            changed = True
-            self.wood = self.inventory.get_amount(Resource.WOOD)
-            self.wood_production_per_second = output_rate * effective_workers
-            result["produced"] = produced_amount
-            result["effective_workers"] = effective_workers
-            if consumption:
-                result["consumed"] = consumption
-
-            if changed:
-                self._state_version += 1
-        return result
-
-    def _recompute_wood_state_locked(self) -> bool:
-        """Synchronise derived wood values.
-
-        Returns ``True`` when any of the tracked values changed as part of the
-        recomputation. Callers are responsible for bumping the state version when
-        ``True`` is returned.
-        """
-
-        woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
-        previous_built = self.woodcutter_camps_built
-        previous_workers = self.workers_assigned_woodcutter
-        previous_capacity = self.wood_max_capacity
-        previous_max_workers = self.max_workers_woodcutter
-        previous_wood = self.wood
-        previous_rate = self.wood_production_per_second
-
-        built = woodcutter.built_count if woodcutter else 0
-        built = max(0, int(built))
-        self.woodcutter_camps_built = built
-
-        max_workers = built * 2
-        self.max_workers_woodcutter = max_workers
-
-        assigned = max(0, int(woodcutter.assigned_workers)) if woodcutter else 0
-        if assigned > max_workers:
-            assigned = max_workers
-            if woodcutter:
-                woodcutter.assigned_workers = assigned
-        if built == 0:
-            if woodcutter and woodcutter.assigned_workers != 0:
-                woodcutter.assigned_workers = 0
-            assigned = 0
-        self.workers_assigned_woodcutter = assigned
-
-        capacity = 30.0 * built
-        current_capacity = self.inventory.get_capacity(Resource.WOOD) or 0.0
-        if abs(current_capacity - capacity) > 1e-9:
-            self.inventory.set_capacity(Resource.WOOD, capacity)
-        self.wood_max_capacity = capacity
-
-        current_amount = max(0.0, self.inventory.get_amount(Resource.WOOD))
-        limit = capacity
-        if current_amount > limit + 1e-9:
-            current_amount = limit
-            self.inventory.set_amount(Resource.WOOD, current_amount)
-        if built == 0 and current_amount > 0.0:
-            current_amount = 0.0
-            self.inventory.set_amount(Resource.WOOD, 0.0)
-        self.wood = current_amount
-
-        wood_recipe = config.BUILDING_RECIPES[config.WOODCUTTER_CAMP]
-        per_worker_output = 0.0
-        if wood_recipe.per_worker_output_rate:
-            per_worker_output = float(
-                wood_recipe.per_worker_output_rate.get(Resource.WOOD, 0.0)
-            )
-        rate = assigned * per_worker_output if built > 0 else 0.0
-        self.wood_production_per_second = rate
-
-        return (
-            previous_built != self.woodcutter_camps_built
-            or previous_workers != self.workers_assigned_woodcutter
-            or abs(previous_capacity - self.wood_max_capacity) > 1e-9
-            or previous_max_workers != self.max_workers_woodcutter
-            or abs(previous_wood - self.wood) > 1e-9
-            or abs(previous_rate - self.wood_production_per_second) > 1e-9
-        )
-
-    # ------------------------------------------------------------------
-    def snapshot_hud(self) -> Dict[str, object]:
-        return {
-            "season": self.season_snapshot,
-            "resources": [
-                {
-                    "key": resource.value,
-                    "amount": self.inventory.get_amount(resource),
-                    "capacity": self.inventory.get_capacity(resource),
-                }
-                for resource in ALL_RESOURCES
-            ],
-            "warnings": list(self.notifications),
-        }
-
-    def snapshot_buildings(self) -> List[Dict[str, object]]:
-        return [self._build_building_snapshot(building) for building in self.buildings.values()]
-
-    def snapshot_building(self, building_id: str) -> Dict[str, object]:
-        canonical_id = self._canonical_building_id(building_id)
-        building = self.buildings.get(canonical_id)
-        if building is None:
-            raise ValueError("Edificio inexistente")
-        return self._build_building_snapshot(building)
-
     def snapshot_state(self) -> Dict[str, object]:
         with self._lock:
-            version = int(self._state_version)
-            time_state = {
-                "server_now": float(self.time.get("server_now", 0.0)),
-                "last_tick": float(self.time.get("last_tick", 0.0)),
+            return {
+                "time": self.time,
+                "inventory": self.inventory.snapshot(),
+                "workers": {
+                    "total": self.workers_total,
+                    "free": self.workers_free,
+                },
+                "stacks": [self._stack_snapshot(type_id) for type_id in self._ordered_types()],
             }
-            villagers = [dict(v) for v in self.population.get("villagers", [])]
-            population_detail = {
-                "total": len(villagers),
-                "cap": int(self.population.get("cap", self.population_capacity)),
-                "villagers": villagers,
-            }
-            resources_passive = {"gold": float(self.resources.get("gold", 0.0))}
-        snapshot = {
-            "season": self.season_clock.to_dict(),
-            "buildings": self.snapshot_buildings(),
-            "inventory": self.inventory_snapshot(),
-            "resources": self.resources_snapshot(),
-            "jobs": self.snapshot_jobs(),
-            "trade": self.snapshot_trade(),
-            "notifications": self.list_notifications(),
-            "population": self.population_snapshot(),
-            "wood_state": self.wood_state_snapshot(),
-            "version": version,
-        }
-        snapshot["time"] = time_state
-        snapshot["population_detail"] = population_detail
-        snapshot["resources_passive"] = resources_passive
-        return snapshot
 
-    def production_reports_snapshot(self) -> Dict[int, Dict[str, object]]:
-        snapshot: Dict[int, Dict[str, object]] = {}
-        for building in self.buildings.values():
-            snapshot[building.id] = self._building_last_report(building)
-        return snapshot
-
-    def snapshot_jobs(self) -> Dict[str, object]:
-        return {
-            "available_workers": self.worker_pool.available_workers,
-            "total_workers": self.worker_pool.total_workers,
-            "buildings": {
-                building_id: {
-                    "assigned": building.assigned_workers,
-                    "max": building.max_workers,
-                }
-                for building_id, building in self.buildings.items()
-            },
-        }
-
-    def population_snapshot(self) -> Dict[str, int]:
+    # ------------------------------------------------------------------
+    def advance_time(self, dt: float) -> None:
+        if dt <= 0:
+            return
         with self._lock:
-            total = int(self.population.get("total", self.population_total()))
-            current = int(self.population_current)
-            capacity = int(self.population_capacity)
-            available = int(self.worker_pool.available_workers)
-        available = max(0, min(total, available))
-        return {
-            "current": current,
-            "capacity": capacity,
-            "available": available,
-            "total": total,
-        }
-
-    def snapshot_trade(self) -> Dict[str, Dict[str, float | str]]:
-        return self.trade_manager.snapshot()
-
-    def inventory_snapshot(self) -> Dict[str, Dict[str, float | None]]:
-        return self.inventory.snapshot()
-
-    def resources_snapshot(self) -> Dict[str, float]:
-        return {
-            resource.value: self.inventory.get_amount(resource)
-            for resource in ALL_RESOURCES
-        }
+            self.time += dt
+            for type_id in self._ordered_types():
+                self._compute_stack_report(type_id, dt)
 
     # ------------------------------------------------------------------
-    def _sync_season_state(self) -> None:
-        snapshot = self.season_clock.to_dict()
-        self.season_snapshot = snapshot
-        self.season_time_left_sec = self.season_clock.get_time_left()
-        season_name = str(snapshot.get("season_name", "")).lower()
-        current = self.season.get("current") if isinstance(self.season, dict) else None
-        if current != season_name:
-            timestamp = float(self.time.get("server_now", self.time.get("last_tick", 0.0)))
-            self.on_season_start(season_name, timestamp)
+    def build_instance(self, type_id: str) -> BuildingInstance:
+        with self._lock:
+            building_type = self._get_type(type_id)
+            if not self.inventory.consume(building_type.build_cost):
+                raise InsufficientResourcesError(building_type.build_cost)
+            instance = BuildingInstance(
+                id=self._next_id(type_id),
+                type_id=type_id,
+                level=1,
+                active=True,
+                workers_assigned=0,
+            )
+            self._register_instance(instance)
+            self._compute_stack_report(type_id, 0.0)
+            return instance
+
+    def upgrade_instance(self, instance_id: str) -> BuildingInstance:
+        with self._lock:
+            instance = self._get_instance(instance_id)
+            building_type = self._get_type(instance.type_id)
+            next_level = instance.level + 1
+            if next_level not in building_type.level_defs:
+                raise BuildingOperationError("MAX_LEVEL")
+            level_def = building_type.get_level(next_level)
+            if not self.inventory.consume(level_def.upgrade_cost):
+                raise InsufficientResourcesError(level_def.upgrade_cost)
+            instance.level = next_level
+            self._auto_manage_obsolete(instance.type_id)
+            self._compute_stack_report(instance.type_id, 0.0)
+            return instance
+
+    def consolidate(self, type_id: str) -> BuildingInstance:
+        with self._lock:
+            building_type = self._get_type(type_id)
+            rule = building_type.consolidate_rule
+            if not rule:
+                raise BuildingOperationError("NO_RULE")
+
+            candidates = [
+                inst
+                for inst in self.instances_by_type[type_id]
+                if inst.level == rule.from_level
+            ]
+            if len(candidates) < rule.count:
+                raise BuildingOperationError("NOT_ENOUGH_INSTANCES")
+
+            candidates.sort(key=lambda inst: (inst.active, inst.workers_assigned), reverse=False)
+            selected = candidates[: rule.count]
+
+            workers_recovered = sum(inst.workers_assigned for inst in selected)
+            new_active = any(inst.active for inst in selected)
+
+            for inst in selected:
+                self._remove_instance(inst.id)
+
+            new_instance = BuildingInstance(
+                id=self._next_id(type_id),
+                type_id=type_id,
+                level=rule.to_level,
+                active=new_active,
+                workers_assigned=0,
+            )
+            self._register_instance(new_instance)
+
+            self.workers_free += workers_recovered
+            if new_active and workers_recovered > 0:
+                assigned = min(workers_recovered, self.workers_free)
+                new_instance.workers_assigned = assigned
+                self.workers_free -= assigned
+
+            self._auto_manage_obsolete(type_id)
+            self._compute_stack_report(type_id, 0.0)
+            return new_instance
+
+    def toggle_instance(self, instance_id: str) -> BuildingInstance:
+        with self._lock:
+            instance = self._get_instance(instance_id)
+            if instance.active:
+                self.workers_free += instance.workers_assigned
+                instance.workers_assigned = 0
+                instance.active = False
+            else:
+                instance.active = True
+                self._auto_manage_obsolete(instance.type_id)
+            self._compute_stack_report(instance.type_id, 0.0)
+            return instance
+
+    def demolish_instance(self, instance_id: str) -> None:
+        with self._lock:
+            instance = self._get_instance(instance_id)
+            building_type = self._get_type(instance.type_id)
+            refund = {resource: amount * DEFAULT_REFUND_RATIO for resource, amount in building_type.build_cost.items()}
+            self.workers_free += instance.workers_assigned
+            self._remove_instance(instance_id)
+            if refund:
+                self.inventory.add(refund)
+            self._compute_stack_report(building_type.id, 0.0)
+
+    def assign_workers(self, instance_id: str, workers: int) -> BuildingInstance:
+        with self._lock:
+            instance = self._get_instance(instance_id)
+            workers = max(0, int(workers))
+            delta = workers - instance.workers_assigned
+            if delta > self.workers_free:
+                raise BuildingOperationError("NOT_ENOUGH_WORKERS")
+            instance.workers_assigned += delta
+            self.workers_free -= delta
+            if instance.workers_assigned == 0:
+                instance.active = False
+            elif not instance.active:
+                instance.active = True
+            self._auto_manage_obsolete(instance.type_id)
+            self._compute_stack_report(instance.type_id, 0.0)
+            return instance
+
+    def optimize_workers(self, type_id: Optional[str] = None) -> None:
+        with self._lock:
+            type_ids = [type_id] if type_id else list(self.catalog.keys())
+            for tid in type_ids:
+                self._optimize_type_workers(tid)
+                self._compute_stack_report(tid, 0.0)
+
+    # ------------------------------------------------------------------
+    def _optimize_type_workers(self, type_id: str) -> None:
+        instances = [inst for inst in self.instances_by_type.get(type_id, []) if inst.active]
+        if not instances:
+            return
+
+        building_type = self._get_type(type_id)
+        available_workers = self.workers_free + sum(inst.workers_assigned for inst in instances)
+        for inst in instances:
+            self.workers_free += inst.workers_assigned
+            inst.workers_assigned = 0
+
+        active_instances = sorted(instances, key=lambda inst: inst.level, reverse=True)
+        while available_workers > 0 and active_instances:
+            best = max(
+                active_instances,
+                key=lambda inst: building_type.base_per_worker * building_type.get_level(inst.level).mult,
+            )
+            best.workers_assigned += 1
+            available_workers -= 1
+
+        allocated = sum(inst.workers_assigned for inst in active_instances)
+        self.workers_free = max(0, self.workers_free - allocated)
+
+    # ------------------------------------------------------------------
+    def _compute_stack_report(self, type_id: str, dt: float) -> None:
+        building_type = self._get_type(type_id)
+        instances = list(self.instances_by_type.get(type_id, []))
+
+        reports: Dict[str, InstanceReport] = {}
+        missing_per_min: Dict[str, float] = defaultdict(float)
+        consumed_per_min: Dict[str, float] = defaultdict(float)
+
+        active_instances = [inst for inst in instances if inst.active and inst.workers_assigned > 0]
+        active_sorted = sorted(active_instances, key=lambda inst: inst.level, reverse=True)
+        active_count = len(active_sorted)
+        penalty = building_type.stack_penalty
+        stack_mult = 1.0
+        if building_type.optional_global_stack_mult and active_count > 0:
+            stack_mult = 1.0 / (1.0 + penalty * max(0, active_count - 1))
+
+        available_inputs = {input_def.resource: self.inventory.get(input_def.resource) for input_def in building_type.inputs}
+
+        total_output_per_min = 0.0
+
+        for instance in active_sorted:
+            level_def = building_type.get_level(instance.level)
+            workers = max(0, instance.workers_assigned)
+
+            required_per_min = {
+                input_def.resource: workers * input_def.rate_per_worker * level_def.mult
+                for input_def in building_type.inputs
+            }
+            required_per_tick = {
+                resource: rate * dt / 60.0 if dt > 0 else rate
+                for resource, rate in required_per_min.items()
+            }
+
+            supply_factor = 1.0
+            if required_per_min:
+                factors = []
+                for resource, required in required_per_tick.items():
+                    if required <= 0:
+                        factors.append(1.0)
+                        continue
+                    available = available_inputs.get(resource, 0.0)
+                    if available <= 0:
+                        factors.append(0.0)
+                    else:
+                        factors.append(min(1.0, available / required))
+                supply_factor = min(factors) if factors else 1.0
+            supply_factor = max(0.0, min(1.0, supply_factor))
+
+            consumed_tick: Dict[str, float] = {}
+            provided_per_min = {}
+            for resource, required_tick in required_per_tick.items():
+                provided_tick = required_tick * supply_factor
+                consumed_tick[resource] = provided_tick
+                available_inputs[resource] = max(0.0, available_inputs.get(resource, 0.0) - provided_tick)
+                provided_per_min[resource] = required_per_min[resource] * supply_factor
+                consumed_per_min[resource] += provided_per_min[resource]
+                missing_per_min[resource] += max(0.0, required_per_min[resource] - provided_per_min[resource])
+
+            output_per_min = (
+                workers
+                * building_type.base_per_worker
+                * level_def.mult
+                * supply_factor
+                * stack_mult
+            )
+            total_output_per_min += output_per_min
+
+            consumed_inputs_per_min = {resource: value for resource, value in provided_per_min.items() if value > 0}
+            reports[instance.id] = InstanceReport(
+                instance_id=instance.id,
+                level=instance.level,
+                active=True,
+                workers=workers,
+                input_factor=supply_factor,
+                produced_per_min=output_per_min,
+                consumed_inputs_per_min=consumed_inputs_per_min,
+            )
+
+        ordered_instances = sorted(instances, key=lambda inst: (-inst.level, inst.id))
+        for instance in ordered_instances:
+            if instance.id not in reports:
+                reports[instance.id] = InstanceReport(
+                    instance_id=instance.id,
+                    level=instance.level,
+                    active=bool(instance.active),
+                    workers=max(0, instance.workers_assigned),
+                    input_factor=0.0,
+                    produced_per_min=0.0,
+                    consumed_inputs_per_min={},
+                )
+
+        consumed_totals_tick = {
+            resource: value * dt / 60.0 if dt > 0 else 0.0
+            for resource, value in consumed_per_min.items()
+        }
+        if dt > 0 and consumed_totals_tick:
+            self.inventory.consume(consumed_totals_tick)
+
+        if dt > 0 and building_type.output and total_output_per_min > 0:
+            produced_tick = total_output_per_min * dt / 60.0
+            self.inventory.add({building_type.output: produced_tick})
+
+        total_workers = sum(inst.workers_assigned for inst in instances)
+
+        missing_clean = {resource: value for resource, value in missing_per_min.items() if value > 1e-6}
+        consumed_clean = {resource: value for resource, value in consumed_per_min.items() if value > 1e-6}
+
+        if not building_type.inputs:
+            input_status = "ok"
         else:
-            self.season["current"] = season_name
+            consumed_total = sum(consumed_clean.values())
+            if not missing_clean:
+                input_status = "ok"
+            elif consumed_total <= 1e-6:
+                input_status = "none"
+            else:
+                input_status = "partial"
+
+        stack_report = StackReport(
+            type_id=type_id,
+            total_output_per_min=total_output_per_min,
+            total_workers=total_workers,
+            input_status=input_status,
+            missing_inputs=missing_clean,
+            consumed_inputs_per_min=consumed_clean,
+            instances=[reports[instance.id] for instance in ordered_instances],
+        )
+
+        self.stack_reports[type_id] = stack_report
 
     # ------------------------------------------------------------------
-    def _build_building_snapshot(self, building: Building) -> Dict[str, object]:
-        snapshot = building.to_snapshot()
-        modifiers = self.get_production_modifiers(building)
-        effective_rate = building.effective_rate(building.assigned_workers, modifiers)
-        modifier_payload = self.season_clock.modifiers_payload(building.type_key)
-        modifier_payload["total_multiplier"] = float(modifier_payload["total_multiplier"])
-        can_produce, reason = self._building_can_produce(building, effective_rate)
-        pending_eta = self._building_pending_eta(building, effective_rate)
-        last_report = self._building_last_report(building)
+    def _stack_snapshot(self, type_id: str) -> Dict[str, object]:
+        building_type = self._get_type(type_id)
+        instances = list(self.instances_by_type.get(type_id, []))
+        report = self.stack_reports.get(type_id)
 
-        snapshot.update(
+        level_breakdown: Dict[int, Dict[str, int]] = {}
+        for inst in instances:
+            entry = level_breakdown.setdefault(inst.level, {"level": inst.level, "count": 0, "active": 0})
+            entry["count"] += 1
+            if inst.active and inst.workers_assigned > 0:
+                entry["active"] += 1
+
+        level_summary = sorted(level_breakdown.values(), key=lambda entry: entry["level"])
+
+        instance_payload = [
             {
-                "effective_rate": effective_rate,
-                "can_produce": can_produce,
-                "reason": reason,
-                "pending_eta": pending_eta,
-                "last_report": last_report,
-                "production_report": last_report,
-                "modifiers_applied": modifier_payload,
+                "id": inst.id,
+                "level": inst.level,
+                "active": inst.active,
+                "workers": inst.workers_assigned,
             }
-        )
-        per_minute_output = building.per_minute_output()
-        if per_minute_output:
-            snapshot["per_minute_output"] = {
-                resource.value: amount for resource, amount in per_minute_output.items()
-            }
-            wood_rate = per_minute_output.get(Resource.WOOD)
-            if wood_rate is not None:
-                snapshot["produces_per_min"] = float(wood_rate)
-                snapshot["produces_unit"] = "wood/min"
-        return snapshot
+            for inst in sorted(instances, key=lambda inst: (-inst.level, inst.id))
+        ]
 
-    def _building_last_report(self, building: Building) -> Dict[str, object]:
-        report = self.last_production_reports.get(building.id, building.production_report)
         return {
-            "status": report.get("status"),
-            "reason": report.get("reason"),
-            "detail": report.get("detail"),
-            "consumed": dict(report.get("consumed", {})),
-            "produced": dict(report.get("produced", {})),
+            "type_id": type_id,
+            "name": type_id.replace("_", " ").title(),
+            "category": building_type.category,
+            "count": len(instances),
+            "active_count": sum(1 for inst in instances if inst.active),
+            "workers_total": sum(inst.workers_assigned for inst in instances),
+            "level_breakdown": level_summary,
+            "report": {
+                "output_per_min": report.total_output_per_min if report else 0.0,
+                "input_status": report.input_status if report else "ok",
+                "missing_inputs": report.missing_inputs if report else {},
+                "consumed_inputs": report.consumed_inputs_per_min if report else {},
+                "instances": [
+                    {
+                        "id": entry.instance_id,
+                        "input_factor": entry.input_factor,
+                        "produced_per_min": entry.produced_per_min,
+                        "consumed_inputs_per_min": entry.consumed_inputs_per_min,
+                        "workers": entry.workers,
+                        "level": entry.level,
+                        "active": entry.active,
+                    }
+                    for entry in (report.instances if report else [])
+                ],
+            },
+            "instances": instance_payload,
+            "consolidate_rule": (
+                {
+                    "from_level": building_type.consolidate_rule.from_level,
+                    "count": building_type.consolidate_rule.count,
+                    "to_level": building_type.consolidate_rule.to_level,
+                }
+                if building_type.consolidate_rule
+                else None
+            ),
         }
 
     # ------------------------------------------------------------------
-    def _update_missing_input_notifications(
-        self,
-        building: Building,
-        report: Dict[str, object],
-        active_missing: Set[Tuple[str, Resource]],
-    ) -> None:
-        if report.get("status") != "stalled" or report.get("reason") != "missing_input":
-            return
+    def _ordered_types(self) -> Iterable[str]:
+        return [
+            item[0]
+            for item in sorted(
+                ((type_id, building.priority, building.category) for type_id, building in self.catalog.items()),
+                key=lambda entry: (-entry[1], entry[2], entry[0]),
+            )
+        ]
 
-        detail = report.get("detail")
-        resource = self._resolve_missing_resource(building, detail)
-        if resource is None:
-            return
+    def _next_id(self, type_id: str) -> str:
+        value = f"{type_id}-{self._next_instance_id:04d}"
+        self._next_instance_id += 1
+        return value
 
-        key = (building.type_key, resource)
-        active_missing.add(key)
-        message = self._format_missing_notification(building, resource)
-        existing = self._active_missing_notifications.get(key)
-        if existing == message:
-            return
-        if existing:
-            self._remove_notification_message(existing)
-        self._enqueue_unique_notification(message)
-        self._active_missing_notifications[key] = message
+    def _register_instance(self, instance: BuildingInstance) -> None:
+        self.instances[instance.id] = instance
+        self.instances_by_type.setdefault(instance.type_id, []).append(instance)
 
-    def _cleanup_missing_notifications(self, active_missing: Set[Tuple[str, Resource]]) -> None:
-        for key, message in list(self._active_missing_notifications.items()):
-            if key not in active_missing:
-                self._active_missing_notifications.pop(key, None)
-                self._remove_notification_message(message)
+    def _remove_instance(self, instance_id: str) -> None:
+        instance = self._get_instance(instance_id)
+        self.instances.pop(instance_id, None)
+        bucket = self.instances_by_type.get(instance.type_id)
+        if bucket is not None:
+            bucket[:] = [inst for inst in bucket if inst.id != instance_id]
 
-    def _resolve_missing_resource(
-        self, building: Building, detail: object
-    ) -> Optional[Resource]:
-        if isinstance(detail, str):
-            try:
-                return Resource(detail)
-            except ValueError:
-                pass
-        if isinstance(detail, Resource):
-            return detail
+    def _get_type(self, type_id: str) -> BuildingType:
+        if type_id not in self.catalog:
+            raise BuildingOperationError("UNKNOWN_TYPE")
+        return self.catalog[type_id]
 
-        for resource, amount in building.inputs_per_cycle.items():
-            if amount <= 0:
-                continue
-            if self.inventory.get_amount(resource) + 1e-9 < amount:
-                return resource
-        for resource, amount in building.maintenance_per_cycle.items():
-            if amount <= 0:
-                continue
-            if self.inventory.get_amount(resource) + 1e-9 < amount:
-                return resource
-        return None
-
-    def _format_missing_notification(self, building: Building, resource: Resource) -> str:
-        readable_resource = resource.value.title()
-        message = f"{building.name} parado: falta {readable_resource}"
-        channel = self.trade_manager.channels.get(resource)
-        if channel and channel.mode == "import":
-            message += " (resoluble via import)"
-        return message
-
-    def _enqueue_unique_notification(self, message: str) -> None:
-        if message in self.notifications:
-            return
-        self.notifications.append(message)
-
-    def _remove_notification_message(self, message: str) -> None:
+    def _get_instance(self, instance_id: str) -> BuildingInstance:
         try:
-            self.notifications.remove(message)
-        except ValueError:
-            pass
+            return self.instances[instance_id]
+        except KeyError as exc:
+            raise InstanceNotFoundError(instance_id) from exc
 
-    def _building_pending_eta(self, building: Building, effective_rate: float) -> Optional[float]:
-        if effective_rate <= 0:
-            return None
-        remaining_progress = max(0.0, building.cycle_time_sec - building.cycle_progress)
-        return remaining_progress / effective_rate if remaining_progress > 0 else 0.0
+    def _auto_manage_obsolete(self, type_id: str) -> None:
+        instances = [inst for inst in self.instances_by_type.get(type_id, []) if inst.active]
+        if not instances:
+            return
 
-    def _building_can_produce(
-        self, building: Building, effective_rate: float
-    ) -> Tuple[bool, Optional[str]]:
-        inactive_reason = building._inactive_reason()
-        if inactive_reason:
-            return False, inactive_reason
+        total_assigned = sum(inst.workers_assigned for inst in instances)
+        if total_assigned > self.workers_total:
+            overflow = total_assigned - self.workers_total
+            for inst in sorted(instances, key=lambda inst: inst.level):
+                if overflow <= 0:
+                    break
+                removed = min(inst.workers_assigned, overflow)
+                inst.workers_assigned -= removed
+                overflow -= removed
+                self.workers_free += removed
+                if inst.workers_assigned <= 0:
+                    inst.active = False
 
-        if effective_rate <= 0:
-            return False, "inactive"
-
-        maintenance = dict(building.maintenance_per_cycle)
-        inputs = dict(building.inputs_per_cycle)
-
-        if maintenance and not self.inventory.has(maintenance):
-            return False, "missing_maintenance"
-        if inputs and not self.inventory.has(inputs):
-            return False, "missing_input"
-
-        combined = Building._combine_resources(inputs, maintenance)
-        if combined and not self.inventory.has(combined):
-            return False, "missing_input"
-
-        outputs = dict(building.outputs_per_cycle)
-        if outputs and not self.inventory.can_add(outputs):
-            return False, "no_capacity"
-
-        return True, None
+    # ------------------------------------------------------------------
+    def get_stack_report(self, type_id: str) -> StackReport:
+        return self.stack_reports[type_id]
 
 
 def get_game_state() -> GameState:
