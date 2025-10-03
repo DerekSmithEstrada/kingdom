@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from datetime import datetime, timezone
 import threading
 from typing import Deque, Dict, List, Mapping, Optional, Set, Tuple
 
@@ -154,11 +155,14 @@ class GameState:
                 wood_amount = self.inventory.get_amount(Resource.WOOD)
                 woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
                 workers = woodcutter.assigned_workers if woodcutter else 0
+                built = int(bool(woodcutter.built)) if woodcutter else 0
                 logger.info(
-                    "Tick %s summary: wood=%.1f workers=%s",
+                    "Tick summary tick=%s wood=%.1f built=%s workers=%s timestamp=%s",
                     self._tick_count,
                     round(wood_amount, 1),
+                    built,
                     workers,
+                    datetime.now(timezone.utc).isoformat(),
                 )
 
     def get_production_modifiers(self, building: Building) -> Dict[str, float]:
@@ -237,6 +241,15 @@ class GameState:
                 self._state_version += 1
 
             return {"delta": int(applied), "assigned": int(building.assigned_workers)}
+
+    def worker_allocation_snapshot(self, building_id: int) -> Dict[str, Optional[int]]:
+        """Return current worker and population availability metrics for instrumentation."""
+
+        with self._lock:
+            building = self.buildings.get(building_id)
+            workers = int(building.assigned_workers) if building else None
+            available = int(self.worker_pool.available_workers)
+        return {"workers": workers, "population_available": available}
 
     def assign_workers(self, building_id: int, number: int) -> int:
         result = self.apply_worker_delta(building_id, number)

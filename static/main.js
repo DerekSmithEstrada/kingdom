@@ -109,6 +109,82 @@
     }
   }
 
+  let latestServerTimestamp = 0;
+  let latestServerRequestId = null;
+
+  function extractServerTimestamp(payload) {
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+    const raw =
+      payload.server_time !== undefined
+        ? payload.server_time
+        : payload.serverTime !== undefined
+        ? payload.serverTime
+        : null;
+    if (typeof raw !== "string" || !raw) {
+      return null;
+    }
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function extractRequestId(payload) {
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+    const raw =
+      payload.request_id !== undefined
+        ? payload.request_id
+        : payload.requestId !== undefined
+        ? payload.requestId
+        : null;
+    return typeof raw === "string" && raw ? raw : null;
+  }
+
+  function isPayloadStale(payload) {
+    const timestamp = extractServerTimestamp(payload);
+    const requestId = extractRequestId(payload);
+    if (timestamp === null) {
+      if (!requestId) {
+        return false;
+      }
+      return requestId === latestServerRequestId;
+    }
+    if (timestamp < latestServerTimestamp) {
+      return true;
+    }
+    if (timestamp === latestServerTimestamp) {
+      if (!requestId) {
+        return true;
+      }
+      return requestId === latestServerRequestId;
+    }
+    return false;
+  }
+
+  function registerServerClock(payload) {
+    const timestamp = extractServerTimestamp(payload);
+    const requestId = extractRequestId(payload);
+    if (timestamp !== null && timestamp >= latestServerTimestamp) {
+      latestServerTimestamp = timestamp;
+    }
+    if (requestId) {
+      latestServerRequestId = requestId;
+    }
+  }
+
+  function acceptServerPayload(payload) {
+    if (!payload || typeof payload !== "object") {
+      return true;
+    }
+    if (isPayloadStale(payload)) {
+      return false;
+    }
+    registerServerClock(payload);
+    return true;
+  }
+
   function applyVerifyCheckToRow(key) {
     if (!verifyState.enabled) {
       return;
@@ -845,6 +921,51 @@
   const JOB_BUILDING_MAP = {
     forester: "woodcutter_camp",
   };
+
+  function resolveServerBuildingId(candidate) {
+    if (candidate === null || candidate === undefined) {
+      return null;
+    }
+    const numeric = Number(candidate);
+    if (!Number.isNaN(numeric) && Number.isFinite(numeric)) {
+      return numeric;
+    }
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate;
+    }
+    return null;
+  }
+
+  function rekeyBuildingMapping(previousId, nextId) {
+    if (previousId === nextId || nextId === null || nextId === undefined) {
+      return;
+    }
+    const keysToRemove = new Set([previousId, String(previousId)]);
+    const numericPrevious = Number(previousId);
+    if (!Number.isNaN(numericPrevious) && Number.isFinite(numericPrevious)) {
+      keysToRemove.add(numericPrevious);
+    }
+    let entry = null;
+    keysToRemove.forEach((key) => {
+      if (entry === null && buildingElementMap.has(key)) {
+        entry = buildingElementMap.get(key);
+      }
+      buildingElementMap.delete(key);
+    });
+    if (entry) {
+      const numericNext = Number(nextId);
+      const resolvedKey =
+        !Number.isNaN(numericNext) && Number.isFinite(numericNext)
+          ? numericNext
+          : nextId;
+      buildingElementMap.set(resolvedKey, entry);
+    }
+    const previousPendingKey = String(previousId);
+    if (pendingWorkerRequests.has(previousPendingKey)) {
+      pendingWorkerRequests.delete(previousPendingKey);
+      pendingWorkerRequests.add(String(nextId));
+    }
+  }
 
   const JOB_ASSIGNMENT_PLACEHOLDER_MESSAGE =
     "Asigná trabajadores desde la tarjeta del edificio. Jobs es solo visual.";
@@ -2243,11 +2364,33 @@
       return true;
     }
 
-    if (typeof building.id !== "number" || !Number.isFinite(building.id)) {
+    const resolvedServerId = (() => {
+      if (typeof building.id === "number" && Number.isFinite(building.id)) {
+        return building.id;
+      }
+      const numericId = Number(building.id);
+      if (!Number.isNaN(numericId) && Number.isFinite(numericId)) {
+        return numericId;
+      }
+      return null;
+    })();
+
+    if (resolvedServerId === null) {
       if (entry) {
         updateWorkerControls(entry, building);
       }
+      if (typeof console !== "undefined" && typeof console.warn === "function") {
+        console.warn(
+          "[Idle Village] Worker assignment aborted: identificador de servidor ausente",
+          buildingId
+        );
+      }
       return false;
+    }
+
+    if (building.id !== resolvedServerId) {
+      rekeyBuildingMapping(building.id, resolvedServerId);
+      building.id = resolvedServerId;
     }
 
     const delta = sanitized - current;
@@ -2259,26 +2402,48 @@
       return true;
     }
 
-    setWorkerRequestPending(building.id, true);
+    setWorkerRequestPending(resolvedServerId, true);
+    let syncingActive = false;
     if (entry) {
       setWorkerFeedback(entry, "Sincronizando con el servidor…", {
         variant: "info",
         state: "syncing",
       });
+      syncingActive = true;
+    }
+
+    const requestUrl = `/api/buildings/${encodeURIComponent(
+      resolvedServerId
+    )}/workers`;
+    const requestBody = { delta };
+    const startedAt = new Date();
+    if (typeof console !== "undefined" && typeof console.info === "function") {
+      console.info("[Idle Village] worker-change:start", {
+        time: startedAt.toISOString(),
+        url: requestUrl,
+        body: requestBody,
+      });
     }
 
     let payload = null;
+    let response = null;
+    let requestIdFromResponse = null;
+    let requestSucceeded = false;
+
     try {
-      const response = await fetch(`/api/buildings/${building.id}/workers`, {
+      response = await fetch(requestUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ delta }),
+        body: JSON.stringify(requestBody),
       });
       try {
         payload = await response.json();
       } catch (error) {
         payload = null;
+      }
+      if (payload) {
+        requestIdFromResponse = extractRequestId(payload);
       }
       const success = Boolean(response && response.ok && payload && payload.ok);
       if (!success) {
@@ -2297,24 +2462,37 @@
         ) {
           console.warn("[Idle Village]", payload.error_message);
         }
-        return false;
+      } else {
+        if (payload.state) {
+          const mergedState = { ...payload.state };
+          if (
+            payload.server_time !== undefined &&
+            mergedState.server_time === undefined
+          ) {
+            mergedState.server_time = payload.server_time;
+          }
+          if (
+            payload.request_id !== undefined &&
+            mergedState.request_id === undefined
+          ) {
+            mergedState.request_id = payload.request_id;
+          }
+          applyPublicState(mergedState);
+        }
+        if (payload.building) {
+          updateBuildingsFromPayload({ buildings: [payload.building] });
+        }
+        const assignedValue = Number(payload.assigned);
+        if (Number.isFinite(assignedValue)) {
+          building.active = assignedValue;
+          building.active_workers = assignedValue;
+          building.workers = assignedValue;
+        }
+        if (entry) {
+          setWorkerFeedback(entry, null);
+        }
+        requestSucceeded = true;
       }
-      if (payload.state) {
-        applyPublicState(payload.state);
-      }
-      if (payload.building) {
-        updateBuildingsFromPayload({ buildings: [payload.building] });
-      }
-      const assignedValue = Number(payload.assigned);
-      if (Number.isFinite(assignedValue)) {
-        building.active = assignedValue;
-        building.active_workers = assignedValue;
-        building.workers = assignedValue;
-      }
-      if (entry) {
-        setWorkerFeedback(entry, null);
-      }
-      return true;
     } catch (error) {
       if (entry) {
         setWorkerFeedback(entry, "Error al contactar al servidor", {
@@ -2324,7 +2502,6 @@
       if (typeof console !== "undefined" && typeof console.error === "function") {
         console.error("[Idle Village] Error asignando trabajadores", error);
       }
-      return false;
     } finally {
       if (
         entry &&
@@ -2333,11 +2510,34 @@
       ) {
         setWorkerFeedback(entry, null);
       }
-      setWorkerRequestPending(building.id, false);
+      setWorkerRequestPending(resolvedServerId, false);
       if (entry) {
         updateWorkerControls(entry, building);
       }
+      const syncingCleared =
+        syncingActive &&
+        (!entry ||
+          !entry.workerFeedback ||
+          entry.workerFeedback.dataset.state !== "syncing");
+      if (typeof console !== "undefined" && typeof console.info === "function") {
+        const finishedAt = new Date();
+        const durationMs = finishedAt.getTime() - startedAt.getTime();
+        const responseStatus = response ? response.status : null;
+        const responseOk = Boolean(response && response.ok);
+        console.info("[Idle Village] worker-change:finish", {
+          time: finishedAt.toISOString(),
+          url: requestUrl,
+          status: responseStatus,
+          ok: responseOk,
+          requestId: requestIdFromResponse,
+          durationMs,
+          clearedSyncing: syncingCleared,
+          success: requestSucceeded,
+        });
+      }
     }
+
+    return requestSucceeded;
   }
 
   function adjustTrade(itemId, changes) {
@@ -2610,6 +2810,11 @@
       if (!match) {
         return;
       }
+      const resolvedRemoteId = resolveServerBuildingId(remote.id);
+      if (resolvedRemoteId !== null && match.id !== resolvedRemoteId) {
+        rekeyBuildingMapping(match.id, resolvedRemoteId);
+        match.id = resolvedRemoteId;
+      }
       match.inputs = remote.inputs;
       match.outputs = remote.outputs;
       match.can_produce = remote.can_produce;
@@ -2705,6 +2910,11 @@
     if (!building) {
       return false;
     }
+    const remoteId = resolveServerBuildingId(woodcutterSnapshot.id);
+    if (remoteId !== null && building.id !== remoteId) {
+      rekeyBuildingMapping(building.id, remoteId);
+      building.id = remoteId;
+    }
     let changed = false;
     const builtValue = Number(woodcutterSnapshot.built);
     if (Number.isFinite(builtValue) && building.built !== builtValue) {
@@ -2795,6 +3005,11 @@
       if (payloadVersion < latestPublicVersion) {
         return null;
       }
+    }
+    if (!acceptServerPayload(payload)) {
+      return null;
+    }
+    if (payloadVersion !== null) {
       latestPublicVersion = Math.max(latestPublicVersion, payloadVersion);
     }
     const resourcesChanged = updateResourcesFromPayload(payload);
@@ -2831,6 +3046,11 @@
       if (payloadVersion < latestPublicVersion) {
         return false;
       }
+    }
+    if (!acceptServerPayload(payload)) {
+      return false;
+    }
+    if (payloadVersion !== null) {
       latestPublicVersion = Math.max(latestPublicVersion, payloadVersion);
     }
     if (payload.season) {
@@ -2852,11 +3072,11 @@
     if (!payload) {
       return false;
     }
-    if (payload.season) {
-      updateSeasonState(payload.season);
+    if (isPayloadStale(payload)) {
+      return false;
     }
-    updateBuildingsFromPayload(payload);
-    return Boolean(payload.season);
+    const snapshotApplied = applyServerSnapshot(payload);
+    return snapshotApplied || Boolean(payload.season);
   }
 
   async function runVerifySuite() {
@@ -3148,11 +3368,8 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dt: 1 }),
       });
-      if (payload) {
-        if (payload.season) {
-          updateSeasonState(payload.season);
-        }
-        updateBuildingsFromPayload(payload);
+      if (payload && !isPayloadStale(payload)) {
+        applyServerSnapshot(payload);
       }
       ticking = false;
     };
