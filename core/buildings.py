@@ -28,6 +28,8 @@ class Building:
     job_name: Optional[str] = None
     job_icon: Optional[str] = None
     build_label: Optional[str] = None
+    role: Optional[str] = None
+    level: int = 1
     id: str = field(init=False)
     production_report: Dict[str, object] = field(default_factory=dict)
 
@@ -41,6 +43,10 @@ class Building:
             self.category_label = self.category.title()
         if not self.build_label:
             self.build_label = self.name
+        if not self.role:
+            self.role = "general"
+        if not isinstance(self.level, int) or self.level <= 0:
+            self.level = 1
 
     # ------------------------------------------------------------------
     @property
@@ -548,18 +554,40 @@ class Building:
             "job_name": self.job_name,
             "job_icon": self.job_icon,
             "build_label": self.build_label,
+            "role": self.role,
+            "level": int(self.level),
         }
 
-        if self.per_worker_output_rate:
+        per_worker_outputs = self.per_worker_output_rate
+        if not per_worker_outputs and self.outputs_per_cycle:
+            if self.max_workers > 0 and self.cycle_time_sec > 0:
+                per_worker_outputs = {
+                    resource: amount / self.cycle_time_sec / self.max_workers
+                    for resource, amount in self.outputs_per_cycle.items()
+                }
+        if per_worker_outputs:
             snapshot["per_worker_output_rate"] = {
-                resource.value: amount
-                for resource, amount in self.per_worker_output_rate.items()
+                resource.value: float(amount)
+                for resource, amount in per_worker_outputs.items()
             }
-        if self.per_worker_input_rate:
+
+        per_worker_inputs = self.per_worker_input_rate
+        if not per_worker_inputs and self.inputs_per_cycle:
+            if self.max_workers > 0 and self.cycle_time_sec > 0:
+                per_worker_inputs = {
+                    resource: amount / self.cycle_time_sec / self.max_workers
+                    for resource, amount in self.inputs_per_cycle.items()
+                }
+        if per_worker_inputs:
             snapshot["per_worker_input_rate"] = {
-                resource.value: amount
-                for resource, amount in self.per_worker_input_rate.items()
+                resource.value: float(amount)
+                for resource, amount in per_worker_inputs.items()
             }
+
+        if "per_worker_output_rate" in snapshot:
+            snapshot["outputs_per_worker"] = dict(snapshot["per_worker_output_rate"])
+        if "per_worker_input_rate" in snapshot:
+            snapshot["inputs_per_worker"] = dict(snapshot["per_worker_input_rate"])
         return snapshot
 
     def to_dict(self) -> Dict[str, object]:
@@ -593,4 +621,6 @@ def build_from_config(type_key: str) -> Building:
         job_name=metadata.job_name,
         job_icon=metadata.job_icon,
         build_label=metadata.build_label,
+        role=metadata.role,
+        level=metadata.level or 1,
     )

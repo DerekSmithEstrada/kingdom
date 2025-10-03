@@ -93,6 +93,8 @@ class BuildingMetadata:
     job_name: Optional[str] = None
     job_icon: Optional[str] = None
     build_label: Optional[str] = None
+    role: Optional[str] = None
+    level: Optional[int] = None
 
 
 BUILDING_METADATA: Dict[str, BuildingMetadata] = {
@@ -104,6 +106,8 @@ BUILDING_METADATA: Dict[str, BuildingMetadata] = {
         job_name="Forester",
         job_icon="🌲",
         build_label="Woodcutter Camp",
+        role="wood_producer",
+        level=2,
     ),
     STICK_GATHERING_TENT: BuildingMetadata(
         category="wood",
@@ -113,6 +117,8 @@ BUILDING_METADATA: Dict[str, BuildingMetadata] = {
         job_name="Stick Gatherer",
         job_icon="🥢",
         build_label="Stick-gathering Tent",
+        role="stick_gatherer",
+        level=1,
     ),
     STONE_GATHERING_TENT: BuildingMetadata(
         category="stone",
@@ -122,6 +128,8 @@ BUILDING_METADATA: Dict[str, BuildingMetadata] = {
         job_name="Stone Gatherer",
         job_icon="🪨",
         build_label="Stone-gathering Tent",
+        role="stone_producer",
+        level=1,
     ),
     LUMBER_HUT: BuildingMetadata(
         category="wood",
@@ -131,6 +139,8 @@ BUILDING_METADATA: Dict[str, BuildingMetadata] = {
         job_name="Artisan",
         job_icon="🛠️",
         build_label="Lumber Hut",
+        role="plank_crafter",
+        level=3,
     ),
     MINER: BuildingMetadata(
         category="stone",
@@ -140,6 +150,8 @@ BUILDING_METADATA: Dict[str, BuildingMetadata] = {
         job_name="Miner",
         job_icon="⛏️",
         build_label="Miner",
+        role="stone_producer",
+        level=3,
     ),
     FARMER: BuildingMetadata(
         category="crops",
@@ -149,6 +161,8 @@ BUILDING_METADATA: Dict[str, BuildingMetadata] = {
         job_name="Farmer",
         job_icon="🌾",
         build_label="Farmer",
+        role="grain_producer",
+        level=2,
     ),
     ARTISAN: BuildingMetadata(
         category="crops",
@@ -158,6 +172,8 @@ BUILDING_METADATA: Dict[str, BuildingMetadata] = {
         job_name="Artisan",
         job_icon="🛠️",
         build_label="Artisan Workshop",
+        role="toolmaker",
+        level=4,
     ),
 }
 

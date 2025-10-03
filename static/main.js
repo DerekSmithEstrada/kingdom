@@ -496,6 +496,18 @@
     const perWorkerInputs = normaliseResourceMap(
       building.per_worker_input_rate || building.perWorkerInputRate
     );
+    const role =
+      typeof building.role === "string" && building.role.trim()
+        ? building.role.trim().toLowerCase()
+        : null;
+    const levelValue = Number(building.level);
+    const level = Number.isFinite(levelValue) ? Math.max(1, Math.round(levelValue)) : 1;
+    const outputsPerWorker = normaliseResourceMap(
+      building.outputs_per_worker || building.outputsPerWorker || perWorkerOutputs
+    );
+    const inputsPerWorker = normaliseResourceMap(
+      building.inputs_per_worker || building.inputsPerWorker || perWorkerInputs
+    );
 
     const normalised = {
       inputs,
@@ -530,6 +542,10 @@
       build_label: buildLabel,
       per_worker_output_rate: perWorkerOutputs,
       per_worker_input_rate: perWorkerInputs,
+      outputs_per_worker: outputsPerWorker,
+      inputs_per_worker: inputsPerWorker,
+      role,
+      level,
     };
 
     if (Number.isFinite(perMinuteValue)) {
@@ -587,6 +603,52 @@
     };
   }
 
+  function normaliseUiState(snapshot) {
+    const base = clone(defaultUiState);
+    if (!snapshot || typeof snapshot !== "object") {
+      return base;
+    }
+    const next = { ...base, ...snapshot };
+    const buildingUi = snapshot.buildings || {};
+    next.buildings = { ...base.buildings, ...buildingUi };
+    const filters = buildingUi.filters || {};
+    next.buildings.filters = {
+      ...base.buildings.filters,
+      ...filters,
+      status: {
+        ...base.buildings.filters.status,
+        ...(filters.status || {}),
+      },
+    };
+    const density = next.buildings.density === "detailed" ? "detailed" : "compact";
+    next.buildings.density = density;
+    const sort = typeof next.buildings.sort === "string" ? next.buildings.sort : "efficiency";
+    next.buildings.sort = sort;
+    const levelValue = next.buildings.filters.level;
+    if (levelValue !== null) {
+      const numericLevel = Number(levelValue);
+      next.buildings.filters.level = Number.isFinite(numericLevel)
+        ? Math.max(1, Math.min(5, Math.round(numericLevel)))
+        : null;
+    }
+    next.buildings.filters.category =
+      typeof next.buildings.filters.category === "string"
+        ? next.buildings.filters.category.toLowerCase()
+        : "all";
+    next.buildings.filters.showObsolete = Boolean(next.buildings.filters.showObsolete);
+    if (!Array.isArray(next.favorites)) {
+      next.favorites = [];
+    }
+    next.favorites = Array.from(
+      new Set(
+        next.favorites
+          .map((value) => (typeof value === "string" ? value : String(value)))
+          .filter(Boolean)
+      )
+    );
+    return next;
+  }
+
   function normaliseState(snapshot) {
     const next = { ...snapshot };
     next.buildings = Array.isArray(snapshot.buildings)
@@ -595,6 +657,7 @@
           .filter(Boolean)
       : [];
     next.population = normalisePopulation(snapshot.population || next.population);
+    next.ui = normaliseUiState(snapshot.ui || snapshot.UI || snapshot.Ui);
     return next;
   }
 
@@ -1025,6 +1088,8 @@
         category: "wood",
         category_label: "Wood",
         build_label: "Woodcutter Camp",
+        role: "wood_producer",
+        level: 2,
         built: 1,
         active: 0,
         capacityPerBuilding: 30,
@@ -1061,6 +1126,8 @@
         category: "wood",
         category_label: "Wood",
         build_label: "Stick-gathering Tent",
+        role: "stick_gatherer",
+        level: 1,
         built: 0,
         active: 0,
         capacityPerBuilding: 30,
@@ -1097,6 +1164,8 @@
         category: "stone",
         category_label: "Stone",
         build_label: "Stone-gathering Tent",
+        role: "stone_producer",
+        level: 1,
         built: 0,
         active: 0,
         capacityPerBuilding: 30,
@@ -1163,11 +1232,31 @@
       progress: 0,
       color_hex: "#38BDF8",
     },
+    ui: {
+      buildings: {
+        density: "compact",
+        sort: "efficiency",
+        filters: {
+          category: "all",
+          level: null,
+          status: {
+            buildable: false,
+            built: false,
+            workers: false,
+            favorites: false,
+          },
+          showObsolete: false,
+        },
+      },
+      favorites: [],
+    },
   };
 
   function clone(value) {
     return JSON.parse(JSON.stringify(value));
   }
+
+  const defaultUiState = clone(defaultState.ui);
 
   function loadState() {
     const source = persistedSnapshot || defaultState;
@@ -1188,6 +1277,48 @@
     state.season = clone(defaultState.season);
   }
 
+  function ensureUiState() {
+    if (!state.ui) {
+      state.ui = clone(defaultUiState);
+      return state.ui;
+    }
+    state.ui = normaliseUiState(state.ui);
+    return state.ui;
+  }
+
+  function getBuildingUiState() {
+    const ui = ensureUiState();
+    if (!ui.buildings) {
+      ui.buildings = clone(defaultUiState.buildings);
+    }
+    return ui.buildings;
+  }
+
+  function getFavoritesSet() {
+    const ui = ensureUiState();
+    if (!Array.isArray(ui.favorites)) {
+      ui.favorites = [];
+    }
+    return new Set(ui.favorites);
+  }
+
+  function isFavorite(buildingId) {
+    const set = getFavoritesSet();
+    return set.has(String(buildingId));
+  }
+
+  function setFavorite(buildingId, shouldFavorite) {
+    const ui = ensureUiState();
+    const key = String(buildingId);
+    const current = new Set(ui.favorites || []);
+    if (shouldFavorite) {
+      current.add(key);
+    } else {
+      current.delete(key);
+    }
+    ui.favorites = Array.from(current);
+  }
+
   function saveState() {
     if (typeof window === "undefined") {
       return;
@@ -1201,11 +1332,14 @@
     }
   }
 
-  const buildingContainers = {
-    wood: document.querySelector('[data-category="wood"]'),
-    stone: document.querySelector('[data-category="stone"]'),
-    crops: document.querySelector('[data-category="crops"]'),
-  };
+  const buildingGrid = document.getElementById("buildings-grid");
+  const buildingFiltersRoot = document.getElementById("building-filters");
+  const categoryChipsContainer = document.getElementById("building-category-chips");
+  const levelChipsContainer = document.getElementById("building-level-chips");
+  const statusChipsContainer = document.getElementById("building-status-chips");
+  const densityToggle = document.getElementById("building-density-toggle");
+  const sortSelect = document.getElementById("building-sort");
+  const obsoleteToggle = document.getElementById("building-obsolete-toggle");
 
   const buildingElementMap = new Map();
   const pendingWorkerRequests = new Set();
@@ -1935,39 +2069,160 @@
     article.className = "building-card";
     article.dataset.buildingId = building.id;
 
+    const header = document.createElement("div");
+    header.className = "building-card__header";
+
     const iconBadge = document.createElement("span");
-    iconBadge.className = "icon-badge";
+    iconBadge.className = "building-card__icon icon-badge";
     iconBadge.setAttribute("role", "img");
     iconBadge.setAttribute("aria-label", `${building.name} icon`);
     iconBadge.textContent = building.icon;
 
-    const meta = document.createElement("div");
-    meta.className = "building-meta";
+    const titleGroup = document.createElement("div");
+    titleGroup.className = "building-card__title";
 
-    const headerRow = document.createElement("div");
-    headerRow.className = "flex items-start justify-between gap-2";
+    const nameRow = document.createElement("div");
+    nameRow.className = "building-card__name-row";
+
     const nameHeading = document.createElement("h3");
-    nameHeading.className = "text-base font-semibold text-slate-100";
+    nameHeading.className = "building-card__name";
     nameHeading.textContent = building.name;
+
+    const levelBadge = document.createElement("span");
+    levelBadge.className = "building-card__level";
+
+    nameRow.append(nameHeading, levelBadge);
+
+    const subtitleRow = document.createElement("div");
+    subtitleRow.className = "building-card__subtitle";
+
     const categoryLabel = document.createElement("span");
-    categoryLabel.className = "text-[0.65rem] uppercase tracking-[0.2em] text-slate-500";
+    categoryLabel.className = "building-card__category";
     categoryLabel.textContent =
       building.category_label || formatResourceKey(building.category);
-    headerRow.append(nameHeading, categoryLabel);
+
+    const statusLabel = document.createElement("span");
+    statusLabel.className = "building-card__state";
+
+    subtitleRow.append(categoryLabel, statusLabel);
+
+    titleGroup.append(nameRow, subtitleRow);
+
+    const favoriteButton = document.createElement("button");
+    favoriteButton.type = "button";
+    favoriteButton.className = "building-card__favorite";
+    favoriteButton.dataset.action = "toggle-favorite";
+    favoriteButton.dataset.buildingId = building.id;
+    favoriteButton.innerHTML =
+      '<span aria-hidden="true">☆</span><span class="sr-only">Toggle favorite</span>';
+    const favoriteIcon = favoriteButton.querySelector('[aria-hidden="true"]');
+
+    header.append(iconBadge, titleGroup, favoriteButton);
 
     const statusContainer = document.createElement("div");
     statusContainer.className = "building-status-row";
     statusContainer.style.display = "none";
+
+    const body = document.createElement("div");
+    body.className = "building-card__body";
+
+    const metricGroup = document.createElement("div");
+    metricGroup.className = "building-card__metric";
+
+    const metricValue = document.createElement("div");
+    metricValue.className = "building-card__metric-value";
+
+    const requirementChip = document.createElement("div");
+    requirementChip.className = "building-card__requirements";
+    requirementChip.hidden = true;
+
+    metricGroup.append(metricValue, requirementChip);
+
+    const costRow = document.createElement("div");
+    costRow.className = "building-card__cost";
+
+    const actionRow = document.createElement("div");
+    actionRow.className = "building-card__actions";
+
+    const buildLabel =
+      typeof building.build_label === "string" && building.build_label
+        ? building.build_label
+        : building.name;
+    const buildButton = document.createElement("button");
+    buildButton.type = "button";
+    buildButton.className = "building-card__build";
+    buildButton.dataset.action = "build";
+    buildButton.dataset.buildingId = building.id;
+    buildButton.textContent = buildLabel ? `Build ${buildLabel}` : "Build";
+    buildButton.dataset.testid = `build-${building.id}`;
+
+    const builtCounter = document.createElement("div");
+    builtCounter.className = "building-card__built";
+
+    const workerControls = document.createElement("div");
+    workerControls.className = "worker-controls";
+
+    const decrementButton = document.createElement("button");
+    decrementButton.type = "button";
+    decrementButton.className = "worker-controls__button";
+    decrementButton.dataset.action = "worker-decrement";
+    decrementButton.dataset.buildingId = building.id;
+    decrementButton.textContent = "−";
+
+    const workerInput = document.createElement("input");
+    workerInput.type = "number";
+    workerInput.min = "0";
+    workerInput.step = "1";
+    workerInput.value = String(building.active || 0);
+    workerInput.dataset.buildingInput = building.id;
+    workerInput.className = "worker-controls__input";
+
+    const incrementButton = document.createElement("button");
+    incrementButton.type = "button";
+    incrementButton.className = "worker-controls__button";
+    incrementButton.dataset.action = "worker-increment";
+    incrementButton.dataset.buildingId = building.id;
+    incrementButton.textContent = "+";
+
+    workerControls.append(decrementButton, workerInput, incrementButton);
+
+    const demolishButton = document.createElement("button");
+    demolishButton.type = "button";
+    demolishButton.className = "building-card__demolish";
+    demolishButton.dataset.action = "demolish";
+    demolishButton.dataset.buildingId = building.id;
+    demolishButton.textContent = "Demolish";
+
+    actionRow.append(buildButton, builtCounter, workerControls, demolishButton);
+
+    const workerFeedback = document.createElement("p");
+    workerFeedback.className = "worker-feedback";
+    workerFeedback.hidden = true;
+
+    body.append(metricGroup, costRow, actionRow, workerFeedback);
+
+    const detailsWrapper = document.createElement("div");
+    detailsWrapper.className = "building-card__details";
+
+    const detailsToggle = document.createElement("button");
+    detailsToggle.type = "button";
+    detailsToggle.className = "building-card__details-toggle";
+    detailsToggle.dataset.action = "toggle-details";
+    detailsToggle.dataset.buildingId = building.id;
+    detailsToggle.innerHTML =
+      '<span class="building-card__details-label">Details</span><span class="building-card__details-caret" aria-hidden="true">▾</span>';
+
+    const detailsPanel = document.createElement("div");
+    detailsPanel.className = "building-card__details-panel";
+    detailsPanel.hidden = true;
+    detailsPanel.dataset.expanded = "false";
+    detailsPanel.dataset.manual = "false";
 
     const statRow = document.createElement("div");
     statRow.className = "stat-row";
     const builtStat = createStat("Built");
     const storageStat = createStat("Storage");
     statRow.append(builtStat.wrapper, storageStat.wrapper);
-
-    const bar = document.createElement("div");
-    bar.className = "bar";
-    bar.setAttribute("aria-hidden", "true");
 
     const ioSection = document.createElement("div");
     ioSection.className = "io-section";
@@ -1980,83 +2235,31 @@
     produces.values.prepend(producesSummary);
     ioSection.append(consumes.row, produces.row);
 
-    const actionRow = document.createElement("div");
-    actionRow.className = "action-row";
+    detailsPanel.append(statRow, ioSection);
+    detailsWrapper.append(detailsToggle, detailsPanel);
 
-    const buildLabel =
-      typeof building.build_label === "string" && building.build_label
-        ? building.build_label
-        : building.name;
-    const buildButton = document.createElement("button");
-    buildButton.type = "button";
-    buildButton.dataset.action = "build";
-    buildButton.dataset.buildingId = building.id;
-    buildButton.textContent = buildLabel ? `Build ${buildLabel}` : "Build";
-    buildButton.dataset.testid = `build-${building.id}`;
-
-    const demolishButton = document.createElement("button");
-    demolishButton.type = "button";
-    demolishButton.dataset.action = "demolish";
-    demolishButton.dataset.buildingId = building.id;
-    demolishButton.textContent = "Demolish";
-
-    const workerGroup = document.createElement("div");
-    workerGroup.className = "worker-group";
-
-    const workerHeader = document.createElement("div");
-    workerHeader.className = "worker-header";
-
-    const workerLabel = document.createElement("span");
-    workerLabel.className = "worker-label";
-    workerLabel.textContent = "Workers";
-
-    const workerControls = document.createElement("div");
-    workerControls.className = "worker-controls";
-
-    const decrementButton = document.createElement("button");
-    decrementButton.type = "button";
-    decrementButton.dataset.action = "worker-decrement";
-    decrementButton.dataset.buildingId = building.id;
-    decrementButton.textContent = "−";
-
-    const workerInput = document.createElement("input");
-    workerInput.type = "number";
-    workerInput.min = "0";
-    workerInput.step = "1";
-    workerInput.value = String(building.active || 0);
-    workerInput.dataset.buildingInput = building.id;
-
-    const incrementButton = document.createElement("button");
-    incrementButton.type = "button";
-    incrementButton.dataset.action = "worker-increment";
-    incrementButton.dataset.buildingId = building.id;
-    incrementButton.textContent = "+";
-
-    workerControls.append(decrementButton, workerInput, incrementButton);
-    workerHeader.append(workerLabel, workerControls);
-    workerGroup.appendChild(workerHeader);
-
-    const workerFeedback = document.createElement("p");
-    workerFeedback.className = "worker-feedback";
-    workerFeedback.hidden = true;
-    workerGroup.appendChild(workerFeedback);
-
-    actionRow.append(buildButton, demolishButton, workerGroup);
-
-    meta.append(headerRow, statusContainer, statRow, bar, ioSection, actionRow);
-    article.append(iconBadge, meta);
+    article.append(header, statusContainer, body, detailsWrapper);
     listItem.appendChild(article);
 
     return {
       root: listItem,
       article,
+      header,
       iconBadge,
       nameHeading,
+      levelBadge,
       categoryLabel,
+      statusLabel,
+      favoriteButton,
+      favoriteIcon,
       statusContainer,
       statusKey: null,
       builtValue: builtStat.value,
+      builtCounter,
       storageValue: storageStat.value,
+      metricValue,
+      requirementChip,
+      costRow,
       workerInput,
       demolishButton,
       incrementButton,
@@ -2070,6 +2273,8 @@
       producesSummary,
       buildButton,
       workerFeedback,
+      detailsToggle,
+      detailsPanel,
     };
   }
 
@@ -2239,6 +2444,170 @@
     entry.producesSummary.title = `Wood production per minute: ${formatted}`;
   }
 
+  function deriveBuildingUiMeta(building) {
+    const costEntries =
+      building && building.cost && typeof building.cost === "object"
+        ? Object.entries(building.cost)
+        : [];
+
+    const costParts = [];
+    const missingResources = [];
+    costEntries.forEach(([resource, amount]) => {
+      const normalized = normaliseResourceKey(resource);
+      const displayLabel = formatResourceKey(resource);
+      costParts.push(`${formatInventoryValue(amount)} ${displayLabel}`);
+      const stock = getResourceStock(normalized);
+      if (!Number.isFinite(stock) || stock + 1e-9 < Number(amount)) {
+        missingResources.push(displayLabel);
+      }
+    });
+
+    const perWorkerOutputs =
+      building && building.outputs_per_worker && Object.keys(building.outputs_per_worker).length
+        ? building.outputs_per_worker
+        : building && building.per_worker_output_rate
+        ? building.per_worker_output_rate
+        : {};
+    const perWorkerInputs =
+      building && building.inputs_per_worker && Object.keys(building.inputs_per_worker).length
+        ? building.inputs_per_worker
+        : building && building.per_worker_input_rate
+        ? building.per_worker_input_rate
+        : {};
+
+    const outputSummary = formatRateList(perWorkerOutputs, "output");
+    const inputSummary = formatRateList(perWorkerInputs, "input");
+
+    return {
+      costEntries,
+      costParts,
+      missingResources,
+      perWorkerOutputs,
+      perWorkerInputs,
+      outputSummary,
+      inputSummary,
+    };
+  }
+
+  function computePerWorkerOutputs(building) {
+    if (!building) {
+      return {};
+    }
+    const map = building.outputs_per_worker || building.per_worker_output_rate;
+    if (map && Object.keys(map).length > 0) {
+      return map;
+    }
+    const outputs = building.outputs || {};
+    const cycleTime = Number(building.cycle_time) || Number(building.cycle_time_sec);
+    const maxWorkers = Number(building.max_workers) || 0;
+    if (!outputs || !cycleTime || cycleTime <= 0 || !maxWorkers) {
+      return {};
+    }
+    const perSecondFactor = 1 / (cycleTime * maxWorkers);
+    return Object.entries(outputs).reduce((acc, [resource, amount]) => {
+      const numeric = Number(amount);
+      if (Number.isFinite(numeric) && numeric !== 0) {
+        acc[resource] = numeric * perSecondFactor;
+      }
+      return acc;
+    }, {});
+  }
+
+  function computePerWorkerInputs(building) {
+    if (!building) {
+      return {};
+    }
+    const map = building.inputs_per_worker || building.per_worker_input_rate;
+    if (map && Object.keys(map).length > 0) {
+      return map;
+    }
+    const inputs = building.inputs || {};
+    const cycleTime = Number(building.cycle_time) || Number(building.cycle_time_sec);
+    const maxWorkers = Number(building.max_workers) || 0;
+    if (!inputs || !cycleTime || cycleTime <= 0 || !maxWorkers) {
+      return {};
+    }
+    const perSecondFactor = 1 / (cycleTime * maxWorkers);
+    return Object.entries(inputs).reduce((acc, [resource, amount]) => {
+      const numeric = Number(amount);
+      if (Number.isFinite(numeric) && numeric !== 0) {
+        acc[resource] = numeric * perSecondFactor;
+      }
+      return acc;
+    }, {});
+  }
+
+  function computePrimaryOutput(building) {
+    const outputs = computePerWorkerOutputs(building);
+    let selected = null;
+    let maxRate = 0;
+    Object.entries(outputs).forEach(([resource, rate]) => {
+      const numeric = Number(rate);
+      if (Number.isFinite(numeric) && numeric > maxRate) {
+        maxRate = numeric;
+        selected = resource;
+      }
+    });
+    return { resource: selected, rate: maxRate };
+  }
+
+  function computeAssignedOutputPerMinute(building, resource) {
+    if (!building || !resource) {
+      return 0;
+    }
+    if (building.per_minute_output && building.per_minute_output[resource] !== undefined) {
+      const value = Number(building.per_minute_output[resource]);
+      if (Number.isFinite(value)) {
+        return value;
+      }
+    }
+    const perWorker = computePerWorkerOutputs(building);
+    const perSecond = Number(perWorker[resource]);
+    const workers = getBuildingAssignedWorkers(building);
+    if (!Number.isFinite(perSecond) || perSecond <= 0 || workers <= 0) {
+      return 0;
+    }
+    return perSecond * workers * 60;
+  }
+
+  function formatPerWorkerSummary(rate, resource) {
+    if (!resource || !Number.isFinite(rate)) {
+      return null;
+    }
+    const value = Math.max(0, rate);
+    const formattedRate = formatPerSecondRate(value);
+    const label = formatResourceKey(resource);
+    return `${formattedRate} ${label}/s per worker`;
+  }
+
+  function computeBuildCostTotal(building) {
+    if (!building || !building.cost) {
+      return 0;
+    }
+    return Object.values(building.cost).reduce((acc, amount) => {
+      const numeric = Number(amount);
+      if (Number.isFinite(numeric)) {
+        return acc + numeric;
+      }
+      return acc;
+    }, 0);
+  }
+
+  function computeCostPerOutput(building) {
+    const { rate } = computePrimaryOutput(building);
+    if (!Number.isFinite(rate) || rate <= 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+    const costTotal = computeBuildCostTotal(building);
+    return costTotal / rate;
+  }
+
+  function toRomanNumeral(level) {
+    const lookup = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
+    const clamped = Math.max(1, Math.min(10, Number(level) || 1));
+    return lookup[clamped];
+  }
+
   function updateBuildButton(entry, building) {
     if (!entry || !entry.buildButton) {
       return;
@@ -2256,53 +2625,27 @@
         ? building.name
         : null;
     button.textContent = buildLabel ? `Build ${buildLabel}` : "Build";
-    const costEntries =
-      building && building.cost && typeof building.cost === "object"
-        ? Object.entries(building.cost)
-        : [];
+    const meta = deriveBuildingUiMeta(building);
 
-    const parts = [];
-    const missingResources = [];
-    costEntries.forEach(([resource, amount]) => {
-      const normalized = normaliseResourceKey(resource);
-      const displayLabel = formatResourceKey(resource);
-      parts.push(`${formatInventoryValue(amount)} ${displayLabel}`);
-      const stock = getResourceStock(normalized);
-      if (!Number.isFinite(stock) || stock + 1e-9 < Number(amount)) {
-        missingResources.push(displayLabel);
-      }
-    });
-
-    const perWorkerOutputs =
-      building && building.per_worker_output_rate
-        ? building.per_worker_output_rate
-        : {};
-    const perWorkerInputs =
-      building && building.per_worker_input_rate
-        ? building.per_worker_input_rate
-        : {};
-    const outputSummary = formatRateList(perWorkerOutputs, "output");
-    const inputSummary = formatRateList(perWorkerInputs, "input");
-
-    const disabled = missingResources.length > 0 && parts.length > 0;
+    const disabled = meta.missingResources.length > 0 && meta.costParts.length > 0;
     if (!isPending) {
       syncAriaDisabled(button, disabled);
     }
 
     const tooltipParts = [];
-    if (parts.length > 0) {
-      let costText = `Cost: ${parts.join(", ")}`;
-      if (missingResources.length > 0) {
-        costText += ` • Missing: ${missingResources.join(", ")}`;
+    if (meta.costParts.length > 0) {
+      let costText = `Cost: ${meta.costParts.join(", ")}`;
+      if (meta.missingResources.length > 0) {
+        costText += ` • Missing: ${meta.missingResources.join(", ")}`;
       }
       tooltipParts.push(costText);
     }
-    if (outputSummary.length > 0) {
-      tooltipParts.push(`Per worker: ${outputSummary.join(", ")}`);
+    if (meta.outputSummary.length > 0) {
+      tooltipParts.push(`Per worker: ${meta.outputSummary.join(", ")}`);
     }
-    if (inputSummary.length > 0) {
-      tooltipParts.push(`Inputs: ${inputSummary.join(", ")}`);
-    } else if (outputSummary.length > 0) {
+    if (meta.inputSummary.length > 0) {
+      tooltipParts.push(`Inputs: ${meta.inputSummary.join(", ")}`);
+    } else if (meta.outputSummary.length > 0) {
       tooltipParts.push("Inputs: none");
     }
 
@@ -2481,7 +2824,8 @@
     }
   }
 
-  function updateBuildingCard(entry, building) {
+  function updateBuildingCard(entry, building, options = {}) {
+    const { obsolete = false } = options;
     entry.root.dataset.buildingId = building.id;
     entry.article.dataset.buildingId = building.id;
     entry.iconBadge.textContent = building.icon;
@@ -2490,8 +2834,87 @@
     entry.categoryLabel.textContent =
       building.category_label || formatResourceKey(building.category);
 
+    const level = Number(building.level) || 1;
+    entry.levelBadge.textContent = toRomanNumeral(level);
+
+    entry.article.dataset.level = String(level);
+    entry.article.dataset.category = building.category || "";
+    entry.article.dataset.role = building.role || "";
+
+    const builtValue = toDisplayInt(building.built || 0);
+    const workers = getBuildingAssignedWorkers(building);
+    const statusTokens = [];
+    if (builtValue > 0) {
+      statusTokens.push(`Built x${builtValue}`);
+    } else {
+      const meta = deriveBuildingUiMeta(building);
+      statusTokens.push(meta.missingResources.length > 0 ? "Missing resources" : "Buildable");
+    }
+    if (workers > 0) {
+      statusTokens.push(`${workers} worker${workers === 1 ? "" : "s"}`);
+    }
+    if (obsolete) {
+      statusTokens.push("Obsolete");
+    }
+    entry.article.classList.toggle("building-card--obsolete", obsolete);
+    entry.statusLabel.textContent = statusTokens.join(" • ");
+    entry.builtCounter.textContent = `Built x${builtValue}`;
+
+    const uiMeta = deriveBuildingUiMeta(building);
+    const perWorker = computePrimaryOutput(building);
+    const perWorkerText = formatPerWorkerSummary(perWorker.rate, perWorker.resource);
+    entry.metricValue.textContent = perWorkerText || "—";
+    if (perWorkerText) {
+      const perMinute = computeAssignedOutputPerMinute(building, perWorker.resource);
+      const perMinuteText = Number.isFinite(perMinute) && perMinute > 0
+        ? `${formatAmount(perMinute)} ${formatResourceKey(perWorker.resource)}/min`
+        : "0";
+      entry.metricValue.title = `Per worker • ${perWorkerText}\nAssigned • ${perMinuteText}`;
+    } else {
+      entry.metricValue.title = "";
+    }
+
+    const perWorkerInputs = computePerWorkerInputs(building);
+    const inputKeys = Object.entries(perWorkerInputs)
+      .filter(([, rate]) => Number(rate) > 0)
+      .map(([resource]) => formatResourceKey(resource));
+    if (inputKeys.length > 0) {
+      entry.requirementChip.hidden = false;
+      entry.requirementChip.textContent = `Requires ${inputKeys.join(" + ")}`;
+    } else {
+      entry.requirementChip.hidden = true;
+      entry.requirementChip.textContent = "";
+    }
+
+    const costText = uiMeta.costParts.length > 0 ? `Cost: ${uiMeta.costParts.join(", ")}` : "";
+    const uiState = getBuildingUiState();
+    const density = uiState.density === "detailed" ? "detailed" : "compact";
+    entry.article.dataset.density = density;
+    const shouldHideCost = density === "compact" && builtValue > 0;
+    if (costText && !shouldHideCost) {
+      entry.costRow.hidden = false;
+      entry.costRow.textContent = costText;
+    } else {
+      entry.costRow.hidden = true;
+      entry.costRow.textContent = "";
+    }
+
     entry.builtValue.textContent = formatAmount(building.built || 0);
     entry.storageValue.textContent = formatStorageSummary(building);
+
+    const favoriteActive = isFavorite(building.id);
+    entry.favoriteButton.classList.toggle("is-active", favoriteActive);
+    entry.favoriteButton.setAttribute("aria-pressed", favoriteActive ? "true" : "false");
+    entry.article.classList.toggle("is-favorite", favoriteActive);
+    if (entry.favoriteIcon) {
+      entry.favoriteIcon.textContent = favoriteActive ? "★" : "☆";
+    }
+
+    const manualExpanded = entry.detailsPanel.dataset.manual === "true";
+    const detailsExpanded = density === "detailed" ? true : manualExpanded;
+    entry.detailsPanel.hidden = !detailsExpanded;
+    entry.detailsToggle.setAttribute("aria-expanded", detailsExpanded ? "true" : "false");
+    entry.detailsPanel.dataset.expanded = detailsExpanded ? "true" : "false";
 
     updateWorkerControls(entry, building);
     updateBuildingStatus(entry, building);
@@ -2501,39 +2924,303 @@
     updateDemolishButton(entry, building);
   }
 
+  function toggleBuildingDetails(buildingId) {
+    const key = resolveBuildingElementKey(buildingId);
+    const entry = buildingElementMap.get(key);
+    if (!entry || !entry.detailsPanel || !entry.detailsToggle) {
+      return;
+    }
+    const currentManual = entry.detailsPanel.dataset.manual === "true";
+    const nextManual = !currentManual;
+    entry.detailsPanel.dataset.manual = nextManual ? "true" : "false";
+    entry.detailsPanel.dataset.expanded = nextManual ? "true" : "false";
+    const expanded = nextManual;
+    entry.detailsPanel.hidden = !expanded;
+    entry.detailsToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  }
+
+  function toggleFavorite(buildingId) {
+    const nextState = !isFavorite(buildingId);
+    setFavorite(buildingId, nextState);
+    saveState();
+    renderBuildings();
+  }
+
+  function computeIsObsolete(building, buildings) {
+    if (!building || !building.role) {
+      return false;
+    }
+    if (isFavorite(building.id)) {
+      return false;
+    }
+    const role = String(building.role || "").toLowerCase();
+    if (!role) {
+      return false;
+    }
+    const ownOutput = computePrimaryOutput(building).rate;
+    if (!Number.isFinite(ownOutput) || ownOutput <= 0) {
+      return false;
+    }
+    const ownCost = computeCostPerOutput(building);
+    const ownLevel = Number(building.level) || 1;
+    return buildings.some((candidate) => {
+      if (!candidate || candidate === building) {
+        return false;
+      }
+      if (String(candidate.role || "").toLowerCase() !== role) {
+        return false;
+      }
+      const candidateOutput = computePrimaryOutput(candidate).rate;
+      if (!Number.isFinite(candidateOutput) || candidateOutput <= 0) {
+        return false;
+      }
+      const outputBetter = candidateOutput >= ownOutput - 1e-9;
+      if (!outputBetter) {
+        return false;
+      }
+      const candidateCost = computeCostPerOutput(candidate);
+      const costBetter = candidateCost <= ownCost + 1e-9;
+      const levelHigher = (Number(candidate.level) || 1) > ownLevel;
+      return (outputBetter && costBetter) || levelHigher;
+    });
+  }
+
+  function renderFilterControls() {
+    const ui = getBuildingUiState();
+    if (categoryChipsContainer) {
+      const categories = new Map();
+      state.buildings.forEach((building) => {
+        const key = String(building.category || "general").toLowerCase();
+        if (!categories.has(key)) {
+          const label = building.category_label || formatResourceKey(key);
+          categories.set(key, label);
+        }
+      });
+      const entries = Array.from(categories.entries()).sort((a, b) =>
+        a[1].localeCompare(b[1])
+      );
+      categoryChipsContainer.innerHTML = "";
+      const allButton = document.createElement("button");
+      allButton.type = "button";
+      allButton.className = "filter-chip";
+      allButton.dataset.filterCategory = "all";
+      allButton.textContent = "All";
+      allButton.setAttribute("aria-pressed", ui.filters.category === "all" ? "true" : "false");
+      categoryChipsContainer.appendChild(allButton);
+      entries.forEach(([key, label]) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "filter-chip";
+        button.dataset.filterCategory = key;
+        button.textContent = label;
+        button.setAttribute(
+          "aria-pressed",
+          ui.filters.category === key ? "true" : "false"
+        );
+        categoryChipsContainer.appendChild(button);
+      });
+    }
+
+    if (levelChipsContainer) {
+      levelChipsContainer.innerHTML = "";
+      for (let level = 1; level <= 5; level += 1) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "filter-chip";
+        button.dataset.filterLevel = String(level);
+        button.textContent = toRomanNumeral(level);
+        button.setAttribute(
+          "aria-pressed",
+          ui.filters.level === level ? "true" : "false"
+        );
+        levelChipsContainer.appendChild(button);
+      }
+      const anyButton = document.createElement("button");
+      anyButton.type = "button";
+      anyButton.className = "filter-chip";
+      anyButton.dataset.filterLevel = "";
+      anyButton.textContent = "Any";
+      anyButton.setAttribute(
+        "aria-pressed",
+        ui.filters.level === null ? "true" : "false"
+      );
+      levelChipsContainer.prepend(anyButton);
+    }
+
+    if (statusChipsContainer) {
+      const statusOptions = [
+        { key: "buildable", label: "Buildable now" },
+        { key: "built", label: "Built" },
+        { key: "workers", label: "Has workers" },
+        { key: "favorites", label: "Favorites" },
+      ];
+      statusChipsContainer.innerHTML = "";
+      statusOptions.forEach(({ key, label }) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "filter-chip";
+        button.dataset.filterStatus = key;
+        button.textContent = label;
+        const active = Boolean(ui.filters.status[key]);
+        button.setAttribute("aria-pressed", active ? "true" : "false");
+        statusChipsContainer.appendChild(button);
+      });
+    }
+
+    if (obsoleteToggle) {
+      const pressed = Boolean(ui.filters.showObsolete);
+      obsoleteToggle.setAttribute("aria-pressed", pressed ? "true" : "false");
+      obsoleteToggle.dataset.filterObsolete = pressed ? "on" : "off";
+      obsoleteToggle.textContent = pressed ? "Hide obsolete" : "Show obsolete";
+    }
+
+    if (densityToggle) {
+      const buttons = densityToggle.querySelectorAll("[data-density]");
+      buttons.forEach((button) => {
+        const isActive = button.dataset.density === ui.density;
+        button.classList.toggle("is-active", isActive);
+        button.setAttribute("aria-pressed", isActive ? "true" : "false");
+      });
+    }
+
+    if (sortSelect) {
+      sortSelect.value = ui.sort;
+    }
+  }
+
   function renderBuildings() {
+    if (!buildingGrid) {
+      return;
+    }
     state.buildings = state.buildings
       .map((building) => normaliseBuilding(building))
       .filter(Boolean);
 
+    ensureUiState();
+    renderFilterControls();
+
+    const ui = getBuildingUiState();
+    const favorites = getFavoritesSet();
+    const allBuildings = state.buildings;
+
+    const decorated = allBuildings.map((building) => {
+      const primary = computePrimaryOutput(building);
+      const perMinute = computeAssignedOutputPerMinute(building, primary.resource);
+      const costPerOutput = computeCostPerOutput(building);
+      const obsolete = computeIsObsolete(building, allBuildings);
+      return { building, primary, perMinute, costPerOutput, obsolete };
+    });
+
+    const activeStatuses = Object.entries(ui.filters.status)
+      .filter(([, value]) => Boolean(value))
+      .map(([key]) => key);
+
+    const filtered = decorated.filter(({ building, obsolete }) => {
+      if (
+        ui.filters.category &&
+        ui.filters.category !== "all" &&
+        String(building.category || "general").toLowerCase() !== ui.filters.category
+      ) {
+        return false;
+      }
+      if (ui.filters.level !== null) {
+        if (Number(building.level) !== ui.filters.level) {
+          return false;
+        }
+      }
+      if (!ui.filters.showObsolete && obsolete) {
+        return false;
+      }
+      if (activeStatuses.length > 0) {
+        const matchesStatus = activeStatuses.some((statusKey) => {
+          switch (statusKey) {
+            case "buildable": {
+              if (toDisplayInt(building.built || 0) > 0) {
+                return false;
+              }
+              const meta = deriveBuildingUiMeta(building);
+              return meta.missingResources.length === 0;
+            }
+            case "built":
+              return toDisplayInt(building.built || 0) > 0;
+            case "workers":
+              return getBuildingAssignedWorkers(building) > 0;
+            case "favorites":
+              return favorites.has(String(building.id));
+            default:
+              return false;
+          }
+        });
+        if (!matchesStatus) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    const sorted = filtered.sort((a, b) => {
+      switch (ui.sort) {
+        case "output": {
+          const delta = (b.perMinute || 0) - (a.perMinute || 0);
+          if (Math.abs(delta) > 1e-6) {
+            return delta;
+          }
+          break;
+        }
+        case "cost": {
+          const delta = (a.costPerOutput || 0) - (b.costPerOutput || 0);
+          if (Math.abs(delta) > 1e-6) {
+            return delta;
+          }
+          break;
+        }
+        case "alphabetical": {
+          return String(a.building.name || "").localeCompare(
+            String(b.building.name || "")
+          );
+        }
+        case "efficiency":
+        default: {
+          const delta = (b.primary.rate || 0) - (a.primary.rate || 0);
+          if (Math.abs(delta) > 1e-6) {
+            return delta;
+          }
+          break;
+        }
+      }
+      return String(a.building.name || "").localeCompare(String(b.building.name || ""));
+    });
+
     const seen = new Set();
 
-    state.buildings.forEach((building) => {
-      const container = buildingContainers[building.category];
-      if (!container) {
-        const existing = buildingElementMap.get(building.id);
-        if (existing) {
-          existing.root.remove();
-          buildingElementMap.delete(building.id);
-        }
-        return;
-      }
-
+    sorted.forEach(({ building, obsolete }) => {
       let entry = buildingElementMap.get(building.id);
       if (!entry) {
         entry = createBuildingCard(building);
         buildingElementMap.set(building.id, entry);
       }
-
-      container.appendChild(entry.root);
-      updateBuildingCard(entry, building);
+      updateBuildingCard(entry, building, { obsolete });
+      entry.article.dataset.obsolete = obsolete ? "true" : "false";
+      entry.root.dataset.obsolete = obsolete ? "true" : "false";
+      entry.root.dataset.favorite = favorites.has(String(building.id)) ? "true" : "false";
+      entry.root.hidden = false;
+      entry.root.style.display = "";
+      buildingGrid.appendChild(entry.root);
       seen.add(building.id);
     });
 
     buildingElementMap.forEach((entry, buildingId) => {
       if (!seen.has(buildingId)) {
-        entry.root.remove();
-        buildingElementMap.delete(buildingId);
+        const stillExists = state.buildings.some(
+          (building) => String(building.id) === String(buildingId)
+        );
+        if (!stillExists) {
+          entry.root.remove();
+          buildingElementMap.delete(buildingId);
+        } else {
+          entry.root.hidden = true;
+          entry.root.style.display = "none";
+        }
       }
     });
 
@@ -3312,6 +3999,14 @@
     } else if (action === "demolish") {
       event.preventDefault();
       await demolishStructure(buildingId);
+    } else if (action === "toggle-details") {
+      event.preventDefault();
+      toggleBuildingDetails(buildingId);
+      return;
+    } else if (action === "toggle-favorite") {
+      event.preventDefault();
+      toggleFavorite(buildingId);
+      return;
     } else if (action === "worker-increment" || action === "worker-decrement") {
       const building = findBuildingById(buildingId);
       if (!building) return;
@@ -3334,6 +4029,83 @@
     const capacity = getCapacity(building);
     const sanitized = Math.max(0, Math.min(capacity, Number.isFinite(value) ? value : 0));
     input.value = sanitized;
+  }
+
+  function handleFilterClick(event) {
+    const categoryButton = event.target.closest("[data-filter-category]");
+    if (categoryButton) {
+      const ui = getBuildingUiState();
+      const value = categoryButton.dataset.filterCategory || "all";
+      ui.filters.category = value;
+      saveState();
+      renderBuildings();
+      return;
+    }
+
+    const levelButton = event.target.closest("[data-filter-level]");
+    if (levelButton) {
+      const ui = getBuildingUiState();
+      const raw = levelButton.dataset.filterLevel;
+      if (!raw) {
+        ui.filters.level = null;
+      } else {
+        const numeric = Number(raw);
+        ui.filters.level = Number.isFinite(numeric)
+          ? Math.max(1, Math.min(5, Math.round(numeric)))
+          : null;
+      }
+      saveState();
+      renderBuildings();
+      return;
+    }
+
+    const statusButton = event.target.closest("[data-filter-status]");
+    if (statusButton) {
+      const key = statusButton.dataset.filterStatus;
+      if (key) {
+        const ui = getBuildingUiState();
+        ui.filters.status[key] = !ui.filters.status[key];
+        saveState();
+        renderBuildings();
+      }
+      return;
+    }
+
+    const obsoleteButton = event.target.closest("[data-filter-obsolete]");
+    if (obsoleteButton) {
+      const ui = getBuildingUiState();
+      ui.filters.showObsolete = !ui.filters.showObsolete;
+      saveState();
+      renderBuildings();
+      return;
+    }
+  }
+
+  function handleDensityToggle(event) {
+    const button = event.target.closest("[data-density]");
+    if (!button) {
+      return;
+    }
+    const ui = getBuildingUiState();
+    const mode = button.dataset.density === "detailed" ? "detailed" : "compact";
+    if (ui.density === mode) {
+      return;
+    }
+    ui.density = mode;
+    saveState();
+    renderBuildings();
+  }
+
+  function handleSortChange(event) {
+    const select = event.target;
+    if (!select || select !== sortSelect) {
+      return;
+    }
+    const ui = getBuildingUiState();
+    const value = String(select.value || "efficiency");
+    ui.sort = value;
+    saveState();
+    renderBuildings();
   }
 
   async function handleJobActions(event) {
@@ -4402,8 +5174,19 @@
   attachViewNavigation();
   setActiveView(viewState.active, { force: true });
 
-  document.getElementById("building-accordion").addEventListener("click", handleBuildingActions);
-  document.getElementById("building-accordion").addEventListener("change", handleBuildingInput);
+  if (buildingGrid) {
+    buildingGrid.addEventListener("click", handleBuildingActions);
+    buildingGrid.addEventListener("change", handleBuildingInput);
+  }
+  if (buildingFiltersRoot) {
+    buildingFiltersRoot.addEventListener("click", handleFilterClick);
+  }
+  if (densityToggle) {
+    densityToggle.addEventListener("click", handleDensityToggle);
+  }
+  if (sortSelect) {
+    sortSelect.addEventListener("change", handleSortChange);
+  }
   jobsList.addEventListener("click", handleJobActions);
   jobsList.addEventListener("change", handleJobInput);
   jobsList.addEventListener("mouseover", jobResourceTooltipShowHandler);
