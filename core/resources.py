@@ -11,28 +11,92 @@ class Resource(str, Enum):
     WOOD = "WOOD"
     STICKS = "STICKS"
     STONE = "STONE"
+    POLISHED_STONE = "POLISHED_STONE"
     GRAIN = "GRAIN"
+    WHEAT = "WHEAT"
+    FLOUR = "FLOUR"
+    BREAD = "BREAD"
+    BERRIES = "BERRIES"
+    FISH = "FISH"
+    BOAR_MEAT = "BOAR_MEAT"
+    MILK = "MILK"
+    CHEESE = "CHEESE"
+    HOPS = "HOPS"
+    BEER = "BEER"
+    HONEY = "HONEY"
+    HERBS = "HERBS"
+    GRAPES = "GRAPES"
+    WINE = "WINE"
     PLANK = "PLANK"
     TOOLS = "TOOLS"
+    BARRELS = "BARRELS"
+    CANDLES = "CANDLES"
+    CLOTH = "CLOTH"
+    CLOTHES = "CLOTHES"
+    WAX = "WAX"
+    WOOL = "WOOL"
     ORE = "ORE"
-    SEEDS = "SEEDS"
-    WATER = "WATER"
+    IRON_ORE = "IRON_ORE"
+    GOLD_ORE = "GOLD_ORE"
+    QUARTZ = "QUARTZ"
+    IRON = "IRON"
     GOLD = "GOLD"
-    HOPS = "HOPS"
+    COAL = "COAL"
+    GLASS = "GLASS"
+    JEWELRY = "JEWELRY"
+    GEMS = "GEMS"
+    WEAPONS = "WEAPONS"
+    SOLDIER = "SOLDIER"
+    ARCHER = "ARCHER"
+    WATER = "WATER"
+    SEEDS = "SEEDS"
+    HAPPINESS = "HAPPINESS"
 
 
 ALL_RESOURCES: List[Resource] = [
     Resource.WOOD,
     Resource.STICKS,
     Resource.STONE,
+    Resource.POLISHED_STONE,
     Resource.GRAIN,
+    Resource.WHEAT,
+    Resource.FLOUR,
+    Resource.BREAD,
+    Resource.BERRIES,
+    Resource.FISH,
+    Resource.BOAR_MEAT,
+    Resource.MILK,
+    Resource.CHEESE,
+    Resource.HOPS,
+    Resource.BEER,
+    Resource.HONEY,
+    Resource.HERBS,
+    Resource.GRAPES,
+    Resource.WINE,
     Resource.PLANK,
     Resource.TOOLS,
+    Resource.BARRELS,
+    Resource.CANDLES,
+    Resource.CLOTH,
+    Resource.CLOTHES,
+    Resource.WAX,
+    Resource.WOOL,
     Resource.ORE,
-    Resource.SEEDS,
-    Resource.WATER,
+    Resource.IRON_ORE,
+    Resource.GOLD_ORE,
+    Resource.QUARTZ,
+    Resource.IRON,
     Resource.GOLD,
-    Resource.HOPS,
+    Resource.COAL,
+    Resource.GLASS,
+    Resource.JEWELRY,
+    Resource.GEMS,
+    Resource.WEAPONS,
+    Resource.SOLDIER,
+    Resource.ARCHER,
+    Resource.WATER,
+    Resource.SEEDS,
+    Resource.HAPPINESS,
 ]
 
 
