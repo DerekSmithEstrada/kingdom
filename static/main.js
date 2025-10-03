@@ -776,8 +776,24 @@
   }
 
   function getTotalAssigned() {
-    const buildingWorkers = state.buildings.reduce((total, building) => total + Number(building.active || 0), 0);
-    const jobWorkers = state.jobs.reduce((total, job) => total + Number(job.assigned || 0), 0);
+    let buildingWorkers = 0;
+    const coveredJobs = new Set();
+    state.buildings.forEach((building) => {
+      const activeValue = Number(building.active);
+      if (Number.isFinite(activeValue)) {
+        buildingWorkers += Math.max(0, activeValue);
+      }
+      if (typeof building.job === "string" && building.job) {
+        coveredJobs.add(building.job);
+      }
+    });
+    const jobWorkers = state.jobs.reduce((total, job) => {
+      if (coveredJobs.has(job.id)) {
+        return total;
+      }
+      const assignedValue = Number(job.assigned);
+      return total + (Number.isFinite(assignedValue) ? Math.max(0, assignedValue) : 0);
+    }, 0);
     return buildingWorkers + jobWorkers;
   }
 
@@ -1608,6 +1624,7 @@
 
       const counter = document.createElement("span");
       counter.className = "text-xs uppercase tracking-[0.2em] text-slate-400";
+      counter.dataset.jobCounter = job.id;
       counter.textContent = `${job.assigned}/${job.max}`;
 
       header.append(titleGroup, counter);
@@ -1644,6 +1661,25 @@
       card.append(header, resourceStrip, controls);
       jobsList.appendChild(card);
     });
+  }
+
+  function updateJobCard(job) {
+    if (!job || !jobsList) {
+      return;
+    }
+    const card = jobsList.querySelector(`[data-job-id="${job.id}"]`);
+    if (!card) {
+      return;
+    }
+    const counter = card.querySelector(`[data-job-counter="${job.id}"]`);
+    if (counter) {
+      counter.textContent = `${job.assigned}/${job.max}`;
+    }
+    const input = card.querySelector(`input[data-job-input="${job.id}"]`);
+    if (input) {
+      input.value = String(job.assigned);
+      input.max = String(job.max);
+    }
   }
 
   function renderTrade() {
@@ -2228,6 +2264,12 @@
       });
     }
 
+    if (payload.items && typeof payload.items === "object") {
+      Object.entries(payload.items).forEach(([key, value]) => {
+        applyResource(key, value);
+      });
+    }
+
     if (payload.inventory && typeof payload.inventory === "object") {
       Object.entries(payload.inventory).forEach(([key, value]) => {
         if (!value || typeof value !== "object") {
@@ -2313,6 +2355,134 @@
     }
 
     return false;
+  }
+
+  function applyBuildingsFromPublicPayload(payload) {
+    if (!payload || typeof payload !== "object") {
+      return false;
+    }
+    const buildings = payload.buildings;
+    if (!buildings || typeof buildings !== "object") {
+      return false;
+    }
+    const woodcutterSnapshot =
+      buildings.woodcutter_camp || buildings.woodcutterCamp || buildings.forester;
+    if (!woodcutterSnapshot || typeof woodcutterSnapshot !== "object") {
+      return false;
+    }
+    const building = state.buildings.find(
+      (entry) => entry.type === "woodcutter_camp" || entry.id === "woodcutter-camp"
+    );
+    if (!building) {
+      return false;
+    }
+    let changed = false;
+    const builtValue = Number(woodcutterSnapshot.built);
+    if (Number.isFinite(builtValue) && building.built !== builtValue) {
+      building.built = builtValue;
+      changed = true;
+    }
+    const workerValue = Number(woodcutterSnapshot.workers);
+    const activeValue = Number.isFinite(workerValue)
+      ? workerValue
+      : Number(woodcutterSnapshot.active);
+    if (Number.isFinite(activeValue)) {
+      if (building.active !== activeValue) {
+        building.active = activeValue;
+        changed = true;
+      }
+      building.active_workers = activeValue;
+      building.workers = activeValue;
+    }
+    const capacityValue = Number(woodcutterSnapshot.capacity);
+    if (Number.isFinite(capacityValue) && building.capacityPerBuilding !== capacityValue) {
+      building.capacityPerBuilding = capacityValue;
+      changed = true;
+    }
+    if (changed) {
+      const entry = buildingElementMap.get(building.id);
+      if (entry) {
+        updateBuildingCard(entry, building);
+      } else {
+        renderBuildings();
+      }
+    }
+    return changed;
+  }
+
+  function applyJobsFromPublicPayload(payload) {
+    if (!payload || typeof payload !== "object") {
+      return false;
+    }
+    const jobs = payload.jobs;
+    if (!jobs || typeof jobs !== "object") {
+      return false;
+    }
+    const entries = Array.isArray(jobs)
+      ? jobs
+      : Object.entries(jobs).map(([id, value]) => ({ id, ...(value || {}) }));
+    let changed = false;
+    entries.forEach((entry) => {
+      const jobId =
+        typeof entry.id === "string"
+          ? entry.id
+          : typeof entry.job === "string"
+          ? entry.job
+          : null;
+      if (!jobId) {
+        return;
+      }
+      const job = state.jobs.find((candidate) => candidate.id === jobId);
+      if (!job) {
+        return;
+      }
+      const assignedValue = Number(
+        entry.assigned !== undefined ? entry.assigned : entry.workers
+      );
+      if (Number.isFinite(assignedValue) && job.assigned !== assignedValue) {
+        job.assigned = assignedValue;
+        changed = true;
+      }
+      const capacityValue = Number(
+        entry.capacity !== undefined ? entry.capacity : entry.max
+      );
+      if (Number.isFinite(capacityValue) && job.max !== capacityValue) {
+        job.max = capacityValue;
+        changed = true;
+      }
+      if (Number.isFinite(assignedValue) || Number.isFinite(capacityValue)) {
+        updateJobCard(job);
+      }
+    });
+    return changed;
+  }
+
+  function applyPublicState(payload) {
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+    const resourcesChanged = updateResourcesFromPayload(payload);
+    const buildingsChanged = applyBuildingsFromPublicPayload(payload);
+    const jobsChanged = applyJobsFromPublicPayload(payload);
+
+    if (resourcesChanged) {
+      updateChips();
+    }
+    if (jobsChanged || buildingsChanged) {
+      updateJobsCount();
+    }
+    if (resourcesChanged || jobsChanged || buildingsChanged) {
+      saveState();
+      logState();
+    }
+
+    if (payload.items && payload.items.wood !== undefined) {
+      const woodAmount = Number(payload.items.wood);
+      if (Number.isFinite(woodAmount)) {
+        return woodAmount;
+      }
+    }
+    return null;
   }
 
   function applyServerSnapshot(payload, options = {}) {
@@ -2678,17 +2848,17 @@
           return;
         }
         const payload = await response.json();
-        if (!payload || !payload.items) {
+        if (!payload) {
           return;
         }
-        const amount = Number(payload.items.wood);
-        const formatted = Number.isFinite(amount)
-          ? amount.toFixed(1).replace(".", ",")
+        const woodAmount = applyPublicState(payload);
+        const numeric = Number.isFinite(woodAmount)
+          ? woodAmount
+          : Number(state.resources && state.resources.wood);
+        const formatted = Number.isFinite(numeric)
+          ? Number(numeric).toFixed(1).replace(".", ",")
           : "0,0";
         woodValueElement.textContent = formatted;
-        if (state.resources) {
-          state.resources.wood = Number.isFinite(amount) ? amount : 0;
-        }
       } catch (error) {
         if (typeof console !== "undefined" && typeof console.error === "function") {
           console.error("[Idle Village] Error consultando /state", error);

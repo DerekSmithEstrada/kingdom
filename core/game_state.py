@@ -107,6 +107,8 @@ class GameState:
 
             building = build_from_config(type_key)
             building.enabled = enabled
+            if isinstance(entry, Mapping) and "built" in entry:
+                building.built = bool(entry.get("built", True))
             assigned = max(0, min(int(workers), building.max_workers))
             building.assigned_workers = assigned
             self.buildings[building.id] = building
@@ -242,15 +244,36 @@ class GameState:
                 for resource in ALL_RESOURCES
             }
             woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
-            workers = woodcutter.assigned_workers if woodcutter else 0
             population = self.population_snapshot()
+
+            if woodcutter is None:
+                built = 0
+                workers = 0
+                capacity = int(
+                    config.BUILDING_RECIPES[config.WOODCUTTER_CAMP].max_workers
+                )
+            else:
+                built = int(bool(woodcutter.built))
+                workers = int(woodcutter.assigned_workers)
+                capacity = int(woodcutter.max_workers)
+
+        active_workers = workers if built > 0 else 0
+        jobs_payload = {
+            "assigned": active_workers,
+            "capacity": capacity,
+        }
+
         return {
             "items": items,
             "buildings": {
                 config.WOODCUTTER_CAMP: {
-                    "workers": int(workers),
+                    "built": built,
+                    "workers": workers,
+                    "capacity": capacity,
+                    "active": active_workers,
                 }
             },
+            "jobs": {"forester": jobs_payload},
             "population": population,
         }
 
@@ -280,7 +303,11 @@ class GameState:
 
     def _increment_wood_locked(self, current: float) -> float:
         woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
-        if woodcutter and woodcutter.assigned_workers >= 1:
+        if (
+            woodcutter
+            and woodcutter.built
+            and woodcutter.assigned_workers >= 1
+        ):
             current += 0.1
         return round(current, 1)
 

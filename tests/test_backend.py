@@ -33,7 +33,14 @@ def test_basic_state_snapshot_defaults():
     state = get_game_state()
     snapshot = state.basic_state_snapshot()
     assert snapshot["population"] == {"current": 2, "capacity": 20}
-    assert snapshot["buildings"][config.WOODCUTTER_CAMP]["workers"] == 0
+    building_payload = snapshot["buildings"][config.WOODCUTTER_CAMP]
+    assert building_payload == {
+        "built": 1,
+        "workers": 0,
+        "capacity": 10,
+        "active": 0,
+    }
+    assert snapshot["jobs"]["forester"] == {"assigned": 0, "capacity": 10}
     for key, amount in snapshot["items"].items():
         assert amount == pytest.approx(0.0), f"{key} expected to be 0"
 
@@ -63,3 +70,13 @@ def test_additional_workers_do_not_change_generation_rate():
     for _ in range(5):
         state.tick(1.0)
     assert _get_wood_amount() == pytest.approx(0.5, rel=1e-9, abs=1e-9)
+
+
+def test_jobs_reflect_building_assignments():
+    state = get_game_state()
+    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
+    assert building is not None
+    ui_bridge.assign_workers(building.id, 2)
+    snapshot = state.basic_state_snapshot()
+    assert snapshot["buildings"][config.WOODCUTTER_CAMP]["workers"] == 2
+    assert snapshot["jobs"]["forester"]["assigned"] == 2
