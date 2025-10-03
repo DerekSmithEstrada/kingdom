@@ -76,6 +76,19 @@ def api_build_building(building_id: str):
     return jsonify(response), status
 
 
+@app.post("/api/buildings/<string:building_id>/demolish")
+def api_demolish_building(building_id: str):
+    """Demolish an existing instance of the requested building."""
+
+    response = ui_bridge.demolish_building(building_id)
+    status = 200
+    if not response.get("ok", False):
+        status = int(response.get("http_status", 400))
+    else:
+        status = int(response.get("http_status", status))
+    return jsonify(response), status
+
+
 @app.post("/api/buildings/<string:building_id>/workers")
 def api_change_workers(building_id: str):
     """Apply a worker delta to the target building."""

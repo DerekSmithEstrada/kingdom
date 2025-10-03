@@ -139,6 +139,73 @@ def test_build_requires_one_wood():
     assert state.inventory.get_amount(Resource.WOOD) == pytest.approx(0.0)
 
 
+def test_build_allows_multiple_instances():
+    state = get_game_state()
+    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
+    assert building is not None
+
+    state.demolish_building(building.id)
+    state.inventory.set_amount(Resource.WOOD, 3)
+
+    for expected in range(1, 4):
+        response = ui_bridge.build_building(config.WOODCUTTER_CAMP)
+        assert response["ok"] is True
+        building = state.get_building_by_type(config.WOODCUTTER_CAMP)
+        assert building is not None
+        assert building.built_count == expected
+        assert state.inventory.get_amount(Resource.WOOD) == pytest.approx(3 - expected)
+
+
+def test_demolish_requires_existing_structure():
+    state = get_game_state()
+    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
+    assert building is not None
+
+    state.demolish_building(building.id)
+    response = ui_bridge.demolish_building(config.WOODCUTTER_CAMP)
+    assert response["ok"] is False
+    assert response["error"] == "NOTHING_TO_DEMOLISH"
+    assert response["http_status"] == 400
+
+
+def test_demolish_clamps_workers_and_capacity():
+    state = get_game_state()
+    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
+    assert building is not None
+
+    _set_workers(0)
+    state.worker_pool.set_total_workers(30)
+    state.demolish_building(building.id)
+    state.inventory.set_amount(Resource.WOOD, 3)
+
+    for _ in range(3):
+        result = ui_bridge.build_building(config.WOODCUTTER_CAMP)
+        assert result["ok"] is True
+
+    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
+    assert building is not None
+    assert building.built_count == 3
+
+    _set_workers(15)
+    assert building.assigned_workers == 15
+
+    state.demolish_building(building.id)
+    assert building.built_count == 2
+    assert building.assigned_workers == 15
+
+    state.demolish_building(building.id)
+    assert building.built_count == 1
+    assert building.assigned_workers == 10
+    assert state.worker_pool.available_workers == 20
+
+    snapshot = state.basic_state_snapshot()
+    woodcutter_snapshot = snapshot["buildings"][config.WOODCUTTER_CAMP]
+    assert woodcutter_snapshot["built"] == 1
+    assert woodcutter_snapshot["capacity"] == 10
+    assert woodcutter_snapshot["active"] == 1
+    assert snapshot["jobs"]["forester"] == {"assigned": 10, "capacity": 10}
+
+
 def test_snapshot_includes_production_per_minute():
     _set_workers(0)
     _set_workers(2)

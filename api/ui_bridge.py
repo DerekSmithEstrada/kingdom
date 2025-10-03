@@ -4,7 +4,11 @@ from __future__ import annotations
 from typing import Dict
 
 from core import config
-from core.game_state import InsufficientResourcesError, get_game_state
+from core.game_state import (
+    InsufficientResourcesError,
+    NothingToDemolishError,
+    get_game_state,
+)
 from core.jobs import WorkerAllocationError
 from core.persistence import load_game as core_load_game, save_game as core_save_game
 from core.resources import Resource
@@ -166,10 +170,47 @@ def build_building(type_key: str) -> Dict[str, object]:
 def demolish_building(building_id: int) -> Dict[str, object]:
     state = get_game_state()
     try:
-        state.demolish_building(int(building_id))
-        return _success_response()
+        canonical_id = config.resolve_building_public_id(str(building_id))
+    except ValueError:
+        error = _error_response(
+            "building_not_found",
+            "Edificio inexistente",
+            http_status=404,
+        )
+        error.update(state.response_metadata())
+        return error
+
+    try:
+        building = state.demolish_building(canonical_id)
+    except NothingToDemolishError:
+        error: Dict[str, object] = {
+            "ok": False,
+            "error": "NOTHING_TO_DEMOLISH",
+            "error_code": "nothing_to_demolish",
+            "error_message": "No hay edificios para demoler",
+            "http_status": 400,
+        }
+        error.update(state.response_metadata())
+        return error
     except ValueError as exc:
-        return _error_response("building_not_found", str(exc))
+        error = _error_response("building_not_found", str(exc), http_status=404)
+        error.update(state.response_metadata())
+        return error
+
+    snapshot = state.snapshot_building(building.id)
+    state_payload = state.basic_state_snapshot()
+    metadata = state.response_metadata(state_payload.get("version"))
+    payload: Dict[str, object] = {
+        "building": snapshot,
+        "buildings": [snapshot],
+        "production_report": snapshot["last_report"],
+        "state": state_payload,
+        "inventory": state.inventory_snapshot(),
+        "resources": state.resources_snapshot(),
+        "http_status": 200,
+    }
+    payload.update(metadata)
+    return _success_response(**payload)
 
 
 def toggle_building(building_id: int, enabled: bool) -> Dict[str, object]:
