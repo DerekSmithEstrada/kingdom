@@ -16,7 +16,7 @@ async def _run_tick_loop(interval: float) -> None:
     state = get_game_state()
     while True:
         try:
-            state.tick(interval)
+            state.advance_time(interval)
         except Exception:
             # Avoid breaking the loop on unexpected errors; log via print.
             import traceback

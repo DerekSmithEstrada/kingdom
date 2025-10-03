@@ -70,7 +70,18 @@ def tick(dt: float) -> Dict[str, object]:
     """Advance the simulation by ``dt`` seconds."""
 
     state = get_game_state()
-    state.tick(max(0.0, float(dt)))
+    state.advance_time(max(0.0, float(dt)))
+    return _success_response(**_state_payload(state))
+
+
+def season_start(season: str, at: float) -> Dict[str, object]:
+    """Trigger the season start event at the provided timestamp."""
+
+    state = get_game_state()
+    normalized = str(season or "").strip().lower()
+    if normalized.title() in state.season_clock.seasons:
+        state.season_clock.load(normalized.title())
+    state.on_season_start(normalized, float(at))
     return _success_response(**_state_payload(state))
 
 

@@ -20,7 +20,12 @@ def reset_state():
 def test_basic_state_snapshot_defaults():
     state = get_game_state()
     snapshot = state.basic_state_snapshot()
-    assert snapshot["population"] == {"current": 2, "capacity": 20, "available": 1}
+    assert snapshot["population"] == {
+        "current": 2,
+        "capacity": 20,
+        "available": 1,
+        "total": 2,
+    }
     building_payload = snapshot["buildings"][config.WOODCUTTER_CAMP]
     assert building_payload == {
         "built": 1,
@@ -44,7 +49,7 @@ def test_wood_production_matches_formula():
     state = get_game_state()
     state.assign_workers_to_woodcutter(1)
     state.recompute_wood_caps()
-    state.tick(10.0)
+    state.advance_time(10.0)
     snapshot = state.basic_state_snapshot()
     assert snapshot["items"]["wood"] == pytest.approx(1.0, rel=1e-9, abs=1e-9)
     assert snapshot["wood_state"]["wood_production_per_second"] == pytest.approx(0.1)
@@ -74,7 +79,7 @@ def test_capacity_clamp_enforced():
     state.assign_workers_to_woodcutter(2)
     state.inventory.set_amount(Resource.WOOD, 49)
     state.recompute_wood_caps()
-    state.tick(10.0)
+    state.advance_time(10.0)
     assert state.wood_max_capacity == pytest.approx(50.0)
     assert state.wood == pytest.approx(50.0)
 
@@ -85,7 +90,7 @@ def test_no_camps_means_no_production():
     assert building is not None
     state.demolish_building(building.id)
     state.assign_workers_to_woodcutter(5)
-    state.tick(60.0)
+    state.advance_time(60.0)
     state_snapshot = state.basic_state_snapshot()
     wood_state = state_snapshot["wood_state"]
     assert wood_state["woodcutter_camps_built"] == 0
