@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Dict
 
+from . import config
 from .buildings import Building
 
 
@@ -15,7 +16,7 @@ class WorkerPool:
 
     def __init__(self, total_workers: int) -> None:
         self.total_workers = total_workers
-        self._buildings: Dict[int, Building] = {}
+        self._buildings: Dict[str, Building] = {}
 
     # ------------------------------------------------------------------
     @property
@@ -28,16 +29,16 @@ class WorkerPool:
     def register_building(self, building: Building) -> None:
         self._buildings[building.id] = building
 
-    def unregister_building(self, building_id: int) -> int:
-        building = self._buildings.pop(building_id, None)
+    def unregister_building(self, building_id: str) -> int:
+        building = self._buildings.pop(config.resolve_building_public_id(building_id), None)
         if building is None:
             return 0
         removed = max(0, building.assigned_workers)
         building.assigned_workers = 0
         return removed
 
-    def get_assignment(self, building_id: int) -> int:
-        building = self._buildings.get(building_id)
+    def get_assignment(self, building_id: str) -> int:
+        building = self._buildings.get(config.resolve_building_public_id(building_id))
         if building is None:
             return 0
         return max(0, building.assigned_workers)
@@ -76,7 +77,7 @@ class WorkerPool:
         building.assigned_workers = value
 
     # ------------------------------------------------------------------
-    def snapshot(self) -> Dict[int, Dict[str, int]]:
+    def snapshot(self) -> Dict[str, Dict[str, int]]:
         return {
             building_id: {"assigned": max(0, building.assigned_workers)}
             for building_id, building in self._buildings.items()
@@ -85,17 +86,21 @@ class WorkerPool:
     def set_total_workers(self, total: int) -> None:
         self.total_workers = max(0, total)
 
-    def bulk_load_assignments(self, assignments: Dict[int, int]) -> None:
+    def bulk_load_assignments(self, assignments: Dict[str, int]) -> None:
         if not assignments:
             self._buildings = {}
             return
         for building_id, value in assignments.items():
-            building = self._buildings.get(int(building_id))
+            try:
+                canonical = config.resolve_building_public_id(str(building_id))
+            except ValueError:
+                continue
+            building = self._buildings.get(canonical)
             if building is None:
                 continue
             self.set_assignment(building, int(value))
 
-    def bulk_export_assignments(self) -> Dict[int, int]:
+    def bulk_export_assignments(self) -> Dict[str, int]:
         return {
             building_id: max(0, building.assigned_workers)
             for building_id, building in self._buildings.items()

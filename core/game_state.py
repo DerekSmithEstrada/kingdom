@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import uuid
+from datetime import datetime, timezone
 from collections import deque
 import threading
 from typing import Deque, Dict, List, Mapping, Optional, Set, Tuple
@@ -31,7 +33,7 @@ class GameState:
         self._tick_count = 0
         self._state_version = 0
         self.notifications: Deque[str] = deque(maxlen=config.NOTIFICATION_QUEUE_LIMIT)
-        self.last_production_reports: Dict[int, Dict[str, object]] = {}
+        self.last_production_reports: Dict[str, Dict[str, object]] = {}
         self._active_missing_notifications: Dict[Tuple[str, Resource], str] = {}
         self._initialise_state()
 
@@ -59,7 +61,7 @@ class GameState:
             self.population_current = int(config.POPULATION_INITIAL)
             self.population_capacity = int(config.POPULATION_CAPACITY)
             self.worker_pool = WorkerPool(self.population_current)
-            self.buildings = {}
+            self.buildings: Dict[str, Building] = {}
             Building.reset_ids()
             self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
             self._initialise_inventory()
@@ -154,10 +156,12 @@ class GameState:
                 wood_amount = self.inventory.get_amount(Resource.WOOD)
                 woodcutter = self.get_building_by_type(config.WOODCUTTER_CAMP)
                 workers = woodcutter.assigned_workers if woodcutter else 0
-                logger.info(
-                    "Tick %s summary: wood=%.1f workers=%s",
+                built = int(bool(woodcutter.built)) if woodcutter else 0
+                logger.debug(
+                    "Tick %s summary: wood=%.1f built=%s workers=%s",
                     self._tick_count,
                     round(wood_amount, 1),
+                    built,
                     workers,
                 )
 
@@ -180,8 +184,9 @@ class GameState:
         self.add_notification(f"Construido {building.name}")
         return building
 
-    def demolish_building(self, building_id: int, refund_rate: float = 0.5) -> Building:
-        building = self.buildings.pop(building_id, None)
+    def demolish_building(self, building_id: str, refund_rate: float = 0.5) -> Building:
+        canonical_id = self._canonical_building_id(building_id)
+        building = self.buildings.pop(canonical_id, None)
         if building is None:
             raise ValueError("Edificio inexistente")
         refund = {
@@ -190,13 +195,14 @@ class GameState:
         }
         if refund:
             self.inventory.add(refund)
-        self.worker_pool.unregister_building(building_id)
+        self.worker_pool.unregister_building(canonical_id)
         building.assigned_workers = 0
         self.add_notification(f"{building.name} demolido")
         return building
 
-    def toggle_building(self, building_id: int, enabled: bool) -> None:
-        building = self.buildings.get(building_id)
+    def toggle_building(self, building_id: str, enabled: bool) -> None:
+        canonical_id = self._canonical_building_id(building_id)
+        building = self.buildings.get(canonical_id)
         if building is None:
             raise ValueError("Edificio inexistente")
         building.enabled = enabled
@@ -216,16 +222,29 @@ class GameState:
                 )
         return ""
 
+    def _canonical_building_id(self, building_id: str) -> str:
+        try:
+            return config.resolve_building_public_id(building_id)
+        except ValueError as exc:  # pragma: no cover - error path exercised via API
+            raise ValueError("Edificio inexistente") from exc
+
     # ------------------------------------------------------------------
-    def apply_worker_delta(self, building_id: int, delta: int) -> Dict[str, int]:
+    def apply_worker_delta(self, building_id: str, delta: int) -> Dict[str, int]:
         with self._lock:
-            building = self.buildings.get(building_id)
+            canonical_id = self._canonical_building_id(building_id)
+            building = self.buildings.get(canonical_id)
             if building is None:
                 raise ValueError("Edificio inexistente")
 
             change = int(delta)
             if change == 0:
-                return {"delta": 0, "assigned": int(building.assigned_workers)}
+                return {
+                    "before": int(building.assigned_workers),
+                    "delta": 0,
+                    "assigned": int(building.assigned_workers),
+                }
+
+            before = int(building.assigned_workers)
 
             if change > 0:
                 applied = self.worker_pool.assign_workers(building, change)
@@ -236,18 +255,26 @@ class GameState:
             if applied != 0:
                 self._state_version += 1
 
-            return {"delta": int(applied), "assigned": int(building.assigned_workers)}
+            return {
+                "before": before,
+                "delta": int(applied),
+                "assigned": int(building.assigned_workers),
+            }
 
-    def assign_workers(self, building_id: int, number: int) -> int:
+    def assign_workers(self, building_id: str, number: int) -> int:
         result = self.apply_worker_delta(building_id, number)
         return max(0, result["delta"])
 
-    def unassign_workers(self, building_id: int, number: int) -> int:
+    def unassign_workers(self, building_id: str, number: int) -> int:
         result = self.apply_worker_delta(building_id, -number)
         return abs(min(0, result["delta"]))
 
-    def get_building(self, building_id: int) -> Optional[Building]:
-        return self.buildings.get(building_id)
+    def get_building(self, building_id: str) -> Optional[Building]:
+        try:
+            canonical_id = self._canonical_building_id(building_id)
+        except ValueError:
+            return None
+        return self.buildings.get(canonical_id)
 
     def get_building_by_type(self, type_key: str) -> Optional[Building]:
         for building in self.buildings.values():
@@ -284,7 +311,7 @@ class GameState:
             "capacity": capacity,
         }
 
-        return {
+        snapshot = {
             "items": items,
             "buildings": {
                 config.WOODCUTTER_CAMP: {
@@ -297,6 +324,26 @@ class GameState:
             "jobs": {"forester": jobs_payload},
             "population": population,
             "version": version,
+        }
+
+        snapshot.update(self.response_metadata(version))
+        return snapshot
+
+    def response_metadata(self, version: Optional[int] = None) -> Dict[str, object]:
+        if version is None:
+            with self._lock:
+                version_value = int(self._state_version)
+        else:
+            version_value = int(version)
+        timestamp = (
+            datetime.now(timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z")
+        )
+        return {
+            "request_id": uuid.uuid4().hex,
+            "server_time": timestamp,
+            "version": version_value,
         }
 
     def _apply_simple_resource_tick(self, dt: float, baseline: float) -> None:
@@ -357,8 +404,9 @@ class GameState:
     def snapshot_buildings(self) -> List[Dict[str, object]]:
         return [self._build_building_snapshot(building) for building in self.buildings.values()]
 
-    def snapshot_building(self, building_id: int) -> Dict[str, object]:
-        building = self.buildings.get(building_id)
+    def snapshot_building(self, building_id: str) -> Dict[str, object]:
+        canonical_id = self._canonical_building_id(building_id)
+        building = self.buildings.get(canonical_id)
         if building is None:
             raise ValueError("Edificio inexistente")
         return self._build_building_snapshot(building)

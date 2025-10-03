@@ -68,26 +68,31 @@ def load_game(path: str) -> None:
     game_state.buildings = {}
     game_state.worker_pool.bulk_load_assignments({})
     Building.reset_ids()
-    max_id = 0
     for entry in data.get("buildings", []):
         type_key = entry.get("type")
         if not type_key or type_key not in config.BUILDING_RECIPES:
             continue
         building = build_from_config(type_key)
-        building.id = int(entry.get("id", building.id))
+        raw_id = entry.get("id")
+        if raw_id is not None:
+            try:
+                building.id = config.resolve_building_public_id(str(raw_id))
+            except ValueError:
+                building.id = config.resolve_building_public_id(building.type_key)
         building.enabled = bool(entry.get("enabled", True))
         building.cycle_progress = float(entry.get("cycle_progress", 0.0))
         assigned = int(entry.get("assigned_workers", 0))
         building.assigned_workers = max(0, min(assigned, building.max_workers))
         game_state.buildings[building.id] = building
-        max_id = max(max_id, building.id)
         game_state.worker_pool.register_building(building)
         game_state.worker_pool.set_assignment(building, building.assigned_workers)
-    Building.reset_ids(max_id + 1)
 
     assignments = workers_info.get("assignments", {})
     for key, value in assignments.items():
-        building_id = int(key)
+        try:
+            building_id = config.resolve_building_public_id(str(key))
+        except ValueError:
+            continue
         building = game_state.buildings.get(building_id)
         if building:
             game_state.worker_pool.set_assignment(building, int(value))

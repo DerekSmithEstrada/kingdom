@@ -22,26 +22,30 @@ def _get_wood_amount():
     return snapshot["items"]["wood"]
 
 
-def _assign_workers(count: int) -> None:
+def _set_workers(target: int) -> None:
     state = get_game_state()
     building = state.get_building_by_type(config.WOODCUTTER_CAMP)
     assert building is not None
-    response = ui_bridge.change_building_workers(building.id, count)
+    delta = int(target) - int(building.assigned_workers)
+    if delta == 0:
+        return
+    response = ui_bridge.change_building_workers(building.id, delta)
     assert response["ok"] is True, response
+    assert response["assigned"] == target
 
 
 def test_basic_state_snapshot_defaults():
     state = get_game_state()
     snapshot = state.basic_state_snapshot()
-    assert snapshot["population"] == {"current": 2, "capacity": 20, "available": 2}
+    assert snapshot["population"] == {"current": 2, "capacity": 20, "available": 1}
     building_payload = snapshot["buildings"][config.WOODCUTTER_CAMP]
     assert building_payload == {
         "built": 1,
-        "workers": 0,
+        "workers": 1,
         "capacity": 10,
-        "active": 0,
+        "active": 1,
     }
-    assert snapshot["jobs"]["forester"] == {"assigned": 0, "capacity": 10}
+    assert snapshot["jobs"]["forester"] == {"assigned": 1, "capacity": 10}
     for key, amount in snapshot["items"].items():
         assert amount == pytest.approx(0.0), f"{key} expected to be 0"
 
@@ -52,13 +56,15 @@ def test_initial_wood_is_zero():
 
 def test_wood_does_not_increase_without_workers():
     state = get_game_state()
+    ui_bridge.change_building_workers(config.WOODCUTTER_CAMP, -1)
     for _ in range(5):
         state.tick(1.0)
     assert _get_wood_amount() == pytest.approx(0.0)
 
 
 def test_wood_increases_by_point_one_per_second_with_workers():
-    _assign_workers(1)
+    _set_workers(0)
+    _set_workers(1)
     state = get_game_state()
     for _ in range(5):
         state.tick(1.0)
@@ -72,7 +78,7 @@ def test_additional_workers_do_not_change_generation_rate():
     failure = ui_bridge.change_building_workers(building.id, 3)
     assert failure["ok"] is False
     assert failure.get("error_code") == "assignment_failed"
-    _assign_workers(2)
+    _set_workers(2)
     state = get_game_state()
     for _ in range(5):
         state.tick(1.0)
@@ -83,7 +89,7 @@ def test_jobs_reflect_building_assignments():
     state = get_game_state()
     building = state.get_building_by_type(config.WOODCUTTER_CAMP)
     assert building is not None
-    ui_bridge.change_building_workers(building.id, 2)
+    _set_workers(2)
     snapshot = state.basic_state_snapshot()
     assert snapshot["buildings"][config.WOODCUTTER_CAMP]["workers"] == 2
     assert snapshot["jobs"]["forester"]["assigned"] == 2
@@ -94,7 +100,6 @@ def test_population_pool_recovers_after_unassign():
     state = get_game_state()
     building = state.get_building_by_type(config.WOODCUTTER_CAMP)
     assert building is not None
-    ui_bridge.change_building_workers(building.id, 1)
     ui_bridge.change_building_workers(building.id, -1)
     snapshot = state.basic_state_snapshot()
     assert snapshot["population"] == {"current": 2, "capacity": 20, "available": 2}
@@ -107,8 +112,8 @@ def test_change_building_workers_delta_payload():
     assigned = ui_bridge.change_building_workers(building.id, 1)
     assert assigned["ok"] is True
     assert assigned["delta"] == 1
-    assert assigned["assigned"] == 1
+    assert assigned["assigned"] == 2
     released = ui_bridge.change_building_workers(building.id, -1)
     assert released["ok"] is True
     assert released["delta"] == -1
-    assert released["assigned"] == 0
+    assert released["assigned"] == 1

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Dict
 
+from core import config
 from core.game_state import get_game_state
 from core.jobs import WorkerAllocationError
 from core.persistence import load_game as core_load_game, save_game as core_save_game
@@ -24,13 +25,18 @@ def _success_response(**payload: object) -> Dict[str, object]:
     return response
 
 
-def _error_response(code: str, message: str) -> Dict[str, object]:
-    return {
+def _error_response(
+    code: str, message: str, *, http_status: int | None = None
+) -> Dict[str, object]:
+    payload: Dict[str, object] = {
         "ok": False,
         "error_code": code,
         "error_message": message,
         "error": message,
     }
+    if http_status is not None:
+        payload["http_status"] = int(http_status)
+    return payload
 
 
 def _should_reset(flag: object) -> bool:
@@ -149,37 +155,58 @@ def toggle_building(building_id: int, enabled: bool) -> Dict[str, object]:
 # Worker management
 
 
-def change_building_workers(building_id: int, delta: int) -> Dict[str, object]:
+def change_building_workers(building_id: str, delta: int) -> Dict[str, object]:
     state = get_game_state()
     try:
-        building_id = int(building_id)
-    except (TypeError, ValueError):
-        return _error_response(
-            "invalid_building_id", "El identificador de edificio es inválido"
+        canonical_id = config.resolve_building_public_id(str(building_id))
+    except ValueError:
+        error = _error_response(
+            "invalid_building_id",
+            "El identificador de edificio es inválido",
+            http_status=404,
         )
+        error.update(state.response_metadata())
+        return error
 
     try:
         delta = int(delta)
     except (TypeError, ValueError):
-        return _error_response(
+        error = _error_response(
             "invalid_delta", "El cambio de trabajadores debe ser un número entero"
         )
+        error.update(state.response_metadata())
+        return error
 
     try:
-        result = state.apply_worker_delta(building_id, delta)
-        snapshot = state.snapshot_building(building_id)
+        result = state.apply_worker_delta(canonical_id, delta)
+        snapshot = state.snapshot_building(canonical_id)
+        state_payload = state.basic_state_snapshot()
+        metadata = {
+            "request_id": state_payload.get("request_id"),
+            "server_time": state_payload.get("server_time"),
+            "version": state_payload.get("version"),
+        }
         payload: Dict[str, object] = {
             "delta": result["delta"],
             "assigned": result["assigned"],
+            "before": result.get("before"),
             "building": snapshot,
             "production_report": snapshot["last_report"],
-            "state": state.basic_state_snapshot(),
+            "state": state_payload,
         }
+        payload.update(metadata)
+        payload["http_status"] = 200
         return _success_response(**payload)
     except WorkerAllocationError as exc:
-        return _error_response("assignment_failed", str(exc))
+        error = _error_response(
+            "assignment_failed", str(exc), http_status=409
+        )
+        error.update(state.response_metadata())
+        return error
     except ValueError as exc:
-        return _error_response("building_not_found", str(exc))
+        error = _error_response("building_not_found", str(exc), http_status=404)
+        error.update(state.response_metadata())
+        return error
 
 
 def assign_workers(building_id: int, num: int) -> Dict[str, object]:

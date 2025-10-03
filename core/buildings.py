@@ -21,14 +21,11 @@ class Building:
     assigned_workers: int = 0
     cycle_progress: float = 0.0
     status: str = "pausado"
-    id: int = field(init=False)
+    id: str = field(init=False)
     production_report: Dict[str, object] = field(default_factory=dict)
 
-    _next_id: int = 1
-
     def __post_init__(self) -> None:
-        self.id = Building._next_id
-        Building._next_id += 1
+        self.id = config.resolve_building_public_id(self.type_key)
         self._maintenance_notified = False
         self._last_effective_rate = 0.0
         self.production_report = self._new_report()
@@ -410,7 +407,8 @@ class Building:
 
     @classmethod
     def reset_ids(cls, next_id: int = 1) -> None:
-        cls._next_id = next_id
+        # Compatibility shim: identifiers are stable strings now.
+        _ = next_id  # pragma: no cover
 
 
 def build_from_config(type_key: str) -> Building:

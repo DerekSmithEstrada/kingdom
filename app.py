@@ -1,4 +1,5 @@
 import logging
+import time
 
 from flask import Flask, jsonify, render_template, request
 
@@ -62,8 +63,8 @@ def api_tick():
     return jsonify(response)
 
 
-@app.post("/api/buildings/<int:building_id>/workers")
-def api_change_workers(building_id: int):
+@app.post("/api/buildings/<string:building_id>/workers")
+def api_change_workers(building_id: str):
     """Apply a worker delta to the target building."""
 
     payload = request.get_json(silent=True) or {}
@@ -74,6 +75,7 @@ def api_change_workers(building_id: int):
             if payload.get("workers") is not None
             else payload.get("count")
         )
+    start = time.perf_counter()
     logger.info(
         "Worker request: building=%s delta=%s payload_keys=%s",
         building_id,
@@ -83,14 +85,31 @@ def api_change_workers(building_id: int):
     response = ui_bridge.change_building_workers(building_id, delta)
     status = 200
     if not response.get("ok", False):
-        error_code = response.get("error_code")
-        status = 404 if error_code == "building_not_found" else 400
+        status = int(response.get("http_status", 400))
+    else:
+        status = int(response.get("http_status", status))
+    duration_ms = (time.perf_counter() - start) * 1000.0
+    building_snapshot = response.get("building") if isinstance(response, dict) else {}
+    normalized_id = None
+    if isinstance(building_snapshot, dict):
+        normalized_id = building_snapshot.get("id")
+    workers_before = response.get("before") if isinstance(response, dict) else None
+    workers_after = response.get("assigned") if isinstance(response, dict) else None
     logger.info(
-        "Worker response: building=%s delta=%s ok=%s status=%s",
+        "Worker response: building=%s normalized=%s delta=%s ok=%s status=%s before=%s after=%s duration_ms=%.2f",
         building_id,
+        normalized_id,
         delta,
         response.get("ok"),
         status,
+        workers_before,
+        workers_after,
+        duration_ms,
+    )
+    logger.info(
+        "Worker metadata: request_id=%s server_time=%s",
+        response.get("request_id"),
+        response.get("server_time"),
     )
     return jsonify(response), status
 
