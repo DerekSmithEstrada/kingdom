@@ -87,6 +87,9 @@ def test_forced_init_and_first_production_cycle(client):
     assert assign_payload["ok"] is True
     assigned_building = assign_payload.get("building", {})
     assert assigned_building.get("active_workers") == 1
+    state_snapshot = assign_payload.get("state", {})
+    population_snapshot = state_snapshot.get("population", {})
+    assert population_snapshot.get("available") == 1
 
     for _ in range(5):
         tick_response = client.post("/api/tick", json={"dt": 1})

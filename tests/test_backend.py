@@ -33,7 +33,7 @@ def _assign_workers(count: int) -> None:
 def test_basic_state_snapshot_defaults():
     state = get_game_state()
     snapshot = state.basic_state_snapshot()
-    assert snapshot["population"] == {"current": 2, "capacity": 20}
+    assert snapshot["population"] == {"current": 2, "capacity": 20, "available": 2}
     building_payload = snapshot["buildings"][config.WOODCUTTER_CAMP]
     assert building_payload == {
         "built": 1,
@@ -87,3 +87,14 @@ def test_jobs_reflect_building_assignments():
     snapshot = state.basic_state_snapshot()
     assert snapshot["buildings"][config.WOODCUTTER_CAMP]["workers"] == 2
     assert snapshot["jobs"]["forester"]["assigned"] == 2
+    assert snapshot["population"]["available"] == 0
+
+
+def test_population_pool_recovers_after_unassign():
+    state = get_game_state()
+    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
+    assert building is not None
+    ui_bridge.assign_workers(building.id, 1)
+    ui_bridge.unassign_workers(building.id, 1)
+    snapshot = state.basic_state_snapshot()
+    assert snapshot["population"] == {"current": 2, "capacity": 20, "available": 2}
