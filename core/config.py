@@ -62,13 +62,16 @@ BUILDING_NAMES: Dict[str, str] = {
     ARTISAN: "Artisan Workshop",
 }
 
-COSTOS_CONSTRUCCION: Dict[str, Dict[Resource, float]] = {
-    WOODCUTTER_CAMP: {Resource.WOOD: 12, Resource.STONE: 4},
-    LUMBER_HUT: {Resource.WOOD: 25, Resource.STONE: 12},
-    MINER: {Resource.WOOD: 18, Resource.STONE: 14},
-    FARMER: {Resource.WOOD: 20, Resource.STONE: 15, Resource.SEEDS: 5},
-    ARTISAN: {Resource.WOOD: 15, Resource.STONE: 20, Resource.PLANK: 4},
+BUILD_COSTS: Dict[str, Dict[Resource, float]] = {
+    WOODCUTTER_CAMP: {Resource.WOOD: 1},
+    LUMBER_HUT: {},
+    MINER: {},
+    FARMER: {},
+    ARTISAN: {},
 }
+
+# Backwards compatibility alias for legacy references.
+COSTOS_CONSTRUCCION: Dict[str, Dict[Resource, float]] = BUILD_COSTS
 
 @dataclass(frozen=True)
 class BuildingRecipe:

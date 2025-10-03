@@ -611,6 +611,15 @@ button:focus-visible {
   list-style: none;
 }
 
+.io-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-weight: 600;
+  color: rgb(226 232 240 / 0.85);
+  text-transform: none;
+}
+
 .io-item {
   display: inline-flex;
   align-items: center;

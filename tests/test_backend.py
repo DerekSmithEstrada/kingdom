@@ -8,6 +8,7 @@ import pytest
 from api import ui_bridge
 from core import config
 from core.game_state import get_game_state
+from core.resources import Resource
 
 
 @pytest.fixture(autouse=True)
@@ -117,3 +118,31 @@ def test_change_building_workers_delta_payload():
     assert released["ok"] is True
     assert released["delta"] == -1
     assert released["assigned"] == 1
+
+
+def test_build_requires_one_wood():
+    state = get_game_state()
+    building = state.get_building_by_type(config.WOODCUTTER_CAMP)
+    assert building is not None
+    state.demolish_building(building.id)
+    state.inventory.set_amount(Resource.WOOD, 0)
+
+    error = ui_bridge.build_building(config.WOODCUTTER_CAMP)
+    assert error["ok"] is False
+    assert error["error"] == "INSUFFICIENT_RESOURCES"
+    assert error.get("requires", {}).get("wood") == pytest.approx(1)
+
+    state.inventory.set_amount(Resource.WOOD, 1)
+    success = ui_bridge.build_building(config.WOODCUTTER_CAMP)
+    assert success["ok"] is True
+    assert success["state"]["items"]["wood"] == pytest.approx(0.0)
+    assert state.inventory.get_amount(Resource.WOOD) == pytest.approx(0.0)
+
+
+def test_snapshot_includes_production_per_minute():
+    _set_workers(0)
+    _set_workers(2)
+    state = get_game_state()
+    snapshot = state.snapshot_building(config.WOODCUTTER_CAMP)
+    assert snapshot["produces_per_min"] == pytest.approx(12.0)
+    assert snapshot["produces_unit"] == "wood/min"
