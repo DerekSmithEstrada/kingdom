@@ -395,6 +395,10 @@
     if (!building || typeof building !== "object") {
       return null;
     }
+    const candidateId =
+      typeof building.id === "string" && building.id
+        ? normaliseKey(building.id)
+        : null;
     const inputs = normaliseResourceMap(
       building.inputs || building.input || building.inputs_per_cycle
     );
@@ -437,6 +441,12 @@
         : typeof building.id === "string"
         ? building.id
         : null;
+    const normalisedId =
+      candidateId ||
+      (typeof typeKey === "string" && typeKey
+        ? normaliseKey(typeKey)
+        : null);
+
     const normalised = {
       inputs,
       outputs,
@@ -448,6 +458,10 @@
       last_report: normaliseReport(building.last_report || building.production_report),
       cycle_time: Number.isFinite(cycleTime) ? cycleTime : 60,
       type: typeKey,
+      id:
+        typeof normalisedId === "string" && normalisedId
+          ? normalisedId
+          : building.id,
       active: Number.isFinite(activeWorkers) ? activeWorkers : 0,
       built: Number.isFinite(builtCount) ? builtCount : 0,
       capacityPerBuilding:
@@ -528,6 +542,109 @@
         : null;
     const numeric = Number(rawVersion);
     return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  function extractPayloadMetadata(payload, fallbackVersion = null) {
+    if (!payload || typeof payload !== "object") {
+      return { serverTime: null, version: fallbackVersion, requestId: null };
+    }
+    const rawServerTime =
+      payload.server_time !== undefined ? payload.server_time : payload.serverTime;
+    let serverTime = null;
+    if (typeof rawServerTime === "string") {
+      const parsed = Date.parse(rawServerTime);
+      if (!Number.isNaN(parsed)) {
+        serverTime = parsed;
+      }
+    }
+    const rawVersion =
+      payload.version !== undefined
+        ? payload.version
+        : payload.state_version !== undefined
+        ? payload.state_version
+        : payload.stateVersion !== undefined
+        ? payload.stateVersion
+        : fallbackVersion;
+    const numericVersion = Number(rawVersion);
+    const version = Number.isFinite(numericVersion)
+      ? numericVersion
+      : fallbackVersion;
+    const rawRequestId =
+      payload.request_id !== undefined ? payload.request_id : payload.requestId;
+    const requestId =
+      typeof rawRequestId === "string" && rawRequestId.trim()
+        ? rawRequestId.trim()
+        : null;
+    return { serverTime, version, requestId };
+  }
+
+  function compareMetadata(next, current) {
+    if (!next) {
+      return 0;
+    }
+    if (next.serverTime !== null && current.serverTime !== null) {
+      if (next.serverTime > current.serverTime) {
+        return 1;
+      }
+      if (next.serverTime < current.serverTime) {
+        return -1;
+      }
+    } else if (next.serverTime !== null && current.serverTime === null) {
+      return 1;
+    }
+
+    if (next.version !== null && current.version !== null) {
+      if (next.version > current.version) {
+        return 1;
+      }
+      if (next.version < current.version) {
+        return -1;
+      }
+    } else if (next.version !== null && current.version === null) {
+      return 1;
+    }
+
+    if (next.requestId && current.requestId) {
+      if (next.requestId === current.requestId) {
+        return 0;
+      }
+      return next.requestId > current.requestId ? 1 : -1;
+    }
+    if (next.requestId && !current.requestId) {
+      return 1;
+    }
+    if (!next.requestId && current.requestId) {
+      return -1;
+    }
+    return 0;
+  }
+
+  function evaluatePayloadFreshness(payload) {
+    const payloadVersion = extractPayloadVersion(payload);
+    const metadata = extractPayloadMetadata(payload, payloadVersion);
+    const comparison = compareMetadata(metadata, latestSyncMeta);
+    if (comparison < 0) {
+      return { accept: false, version: payloadVersion };
+    }
+    if (comparison >= 0) {
+      latestSyncMeta = {
+        serverTime:
+          metadata.serverTime !== null
+            ? metadata.serverTime
+            : latestSyncMeta.serverTime,
+        version:
+          metadata.version !== null
+            ? metadata.version
+            : latestSyncMeta.version,
+        requestId: metadata.requestId || latestSyncMeta.requestId,
+      };
+    }
+    const resolvedVersion =
+      metadata.version !== null ? metadata.version : payloadVersion;
+    if (resolvedVersion !== null) {
+      latestPublicVersion = Math.max(latestPublicVersion, resolvedVersion);
+    }
+    return { accept: true, version: resolvedVersion };
   }
 
   function resolveBuildingElementKey(buildingId) {
@@ -741,6 +858,26 @@
     }
   }
 
+  function logWorkerAction({ action, url, status, requestId, syncingCleared }) {
+    if (typeof console === "undefined") {
+      return;
+    }
+    const logger =
+      typeof console.info === "function" ? console.info : console.log;
+    if (typeof logger !== "function") {
+      return;
+    }
+    const parts = [
+      "[Idle Village][workers]",
+      `action=${action}`,
+      `url=${url}`,
+      `status=${status !== undefined && status !== null ? status : "n/a"}`,
+      `request_id=${requestId || "n/a"}`,
+      `syncing_cleared=${syncingCleared ? "true" : "false"}`,
+    ];
+    logger.call(console, parts.join(" "));
+  }
+
   const defaultState = {
     resources: {
       happiness: 0,
@@ -763,7 +900,7 @@
     },
     buildings: [
       {
-        id: "woodcutter-camp",
+        id: "woodcutter_camp",
         type: "woodcutter_camp",
         job: "forester",
         name: "Woodcutter Camp",
@@ -814,6 +951,11 @@
 
   let state = normaliseState(loadState());
   let latestPublicVersion = Number.NEGATIVE_INFINITY;
+  let latestSyncMeta = {
+    serverTime: null,
+    version: null,
+    requestId: null,
+  };
 
   logState();
 
@@ -1646,7 +1788,8 @@
     entry.incrementButton.dataset.buildingId = building.id;
     entry.assignButton.dataset.buildingId = building.id;
 
-    const hasServerId = typeof building.id === "number" && Number.isFinite(building.id);
+    const hasServerId =
+      typeof building.id === "string" && building.id.trim().length > 0;
     const isPending = pendingWorkerRequests.has(String(building.id));
     const disableState = getWorkerDisableState(building);
     const assignDisabled = !hasServerId || isPending || disableState.disabled;
@@ -2232,7 +2375,9 @@
 
     const current = getBuildingAssignedWorkers(building);
 
-    const entry = buildingElementMap.get(resolveBuildingElementKey(building.id));
+    const normalizedId = String(building.id);
+    const endpoint = `/api/buildings/${encodeURIComponent(normalizedId)}/workers`;
+    const entry = buildingElementMap.get(resolveBuildingElementKey(normalizedId));
     if (entry) {
       setWorkerFeedback(entry, null);
     }
@@ -2242,14 +2387,6 @@
       }
       return true;
     }
-
-    if (typeof building.id !== "number" || !Number.isFinite(building.id)) {
-      if (entry) {
-        updateWorkerControls(entry, building);
-      }
-      return false;
-    }
-
     const delta = sanitized - current;
     const amount = Math.abs(delta);
     if (amount <= 0) {
@@ -2259,7 +2396,7 @@
       return true;
     }
 
-    setWorkerRequestPending(building.id, true);
+    setWorkerRequestPending(normalizedId, true);
     if (entry) {
       setWorkerFeedback(entry, "Sincronizando con el servidor…", {
         variant: "info",
@@ -2268,17 +2405,27 @@
     }
 
     let payload = null;
+    let responseStatus = null;
+    let responseRequestId = null;
+    let syncingCleared = false;
     try {
-      const response = await fetch(`/api/buildings/${building.id}/workers`, {
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
         body: JSON.stringify({ delta }),
       });
+      responseStatus = response ? response.status : null;
       try {
         payload = await response.json();
       } catch (error) {
         payload = null;
+      }
+      if (payload && typeof payload === "object") {
+        const requestIdValue = payload.request_id || payload.requestId;
+        if (typeof requestIdValue === "string" && requestIdValue) {
+          responseRequestId = requestIdValue;
+        }
       }
       const success = Boolean(response && response.ok && payload && payload.ok);
       if (!success) {
@@ -2313,6 +2460,7 @@
       }
       if (entry) {
         setWorkerFeedback(entry, null);
+        syncingCleared = true;
       }
       return true;
     } catch (error) {
@@ -2332,11 +2480,25 @@
         entry.workerFeedback.dataset.state === "syncing"
       ) {
         setWorkerFeedback(entry, null);
+        syncingCleared = true;
       }
-      setWorkerRequestPending(building.id, false);
+      setWorkerRequestPending(normalizedId, false);
       if (entry) {
         updateWorkerControls(entry, building);
       }
+      const clearedState =
+        syncingCleared ||
+        !entry ||
+        !entry.workerFeedback ||
+        entry.workerFeedback.hidden === true ||
+        entry.workerFeedback.dataset.state !== "syncing";
+      logWorkerAction({
+        action: delta > 0 ? "+" : "-",
+        url: endpoint,
+        status: responseStatus,
+        requestId: responseRequestId,
+        syncingCleared: clearedState,
+      });
     }
   }
 
@@ -2700,7 +2862,7 @@
       return false;
     }
     const building = state.buildings.find(
-      (entry) => entry.type === "woodcutter_camp" || entry.id === "woodcutter-camp"
+      (entry) => entry.type === "woodcutter_camp" || entry.id === "woodcutter_camp"
     );
     if (!building) {
       return false;
@@ -2790,12 +2952,9 @@
     if (!payload || typeof payload !== "object") {
       return null;
     }
-    const payloadVersion = extractPayloadVersion(payload);
-    if (payloadVersion !== null) {
-      if (payloadVersion < latestPublicVersion) {
-        return null;
-      }
-      latestPublicVersion = Math.max(latestPublicVersion, payloadVersion);
+    const freshness = evaluatePayloadFreshness(payload);
+    if (!freshness.accept) {
+      return null;
     }
     const resourcesChanged = updateResourcesFromPayload(payload);
     const buildingsChanged = applyBuildingsFromPublicPayload(payload);
@@ -2826,12 +2985,9 @@
       return false;
     }
     const { persist = false } = options;
-    const payloadVersion = extractPayloadVersion(payload);
-    if (payloadVersion !== null) {
-      if (payloadVersion < latestPublicVersion) {
-        return false;
-      }
-      latestPublicVersion = Math.max(latestPublicVersion, payloadVersion);
+    const freshness = evaluatePayloadFreshness(payload);
+    if (!freshness.accept) {
+      return false;
     }
     if (payload.season) {
       updateSeasonState(payload.season);
@@ -2947,8 +3103,8 @@
       if (!name || name.toLowerCase().indexOf("woodcutter") === -1) {
         throw new Error(`Edificio visible inesperado: ${name || "desconocido"}`);
       }
-      if (!Number.isFinite(workers) || Math.abs(workers) > 1e-6) {
-        throw new Error(`Trabajadores esperados 0, observado ${workers}`);
+      if (!Number.isFinite(workers) || Math.abs(workers - 1) > 1e-6) {
+        throw new Error(`Trabajadores esperados 1, observado ${workers}`);
       }
       return `${name} con ${workers} trabajadores`;
     });
@@ -2965,7 +3121,7 @@
         });
 
       let building = findWoodcutter();
-      if (!building || typeof building.id !== "number") {
+      if (!building || typeof building.id !== "string") {
         const refreshed = await fetchJson("/api/state");
         pushVerifyLog("woodGain-refresh", refreshed);
         if (refreshed) {
@@ -2977,19 +3133,28 @@
         }
       }
 
-      if (!building || typeof building.id !== "number") {
+      if (!building || typeof building.id !== "string") {
         throw new Error("No se encontró Woodcutter Camp con un ID válido");
       }
 
       pushVerifyLog("assign-worker-request", { buildingId: building.id });
-      const assignPayload = await fetchJson(`/api/buildings/${building.id}/assign`, {
+      const assignResponse = await fetch(`/api/buildings/${encodeURIComponent(building.id)}/workers`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workers: 1 }),
+        body: JSON.stringify({ delta: 1 }),
       });
+      let assignPayload = null;
+      try {
+        assignPayload = assignResponse ? await assignResponse.json() : null;
+      } catch (error) {
+        assignPayload = null;
+      }
       pushVerifyLog("assign-worker-response", assignPayload);
-      if (!assignPayload || assignPayload.ok !== true) {
+      if (!assignResponse || !assignResponse.ok || !assignPayload || assignPayload.ok !== true) {
         throw new Error("La asignación de trabajadores no fue exitosa");
+      }
+      if (assignPayload.state) {
+        applyPublicState(assignPayload.state);
       }
       if (assignPayload.building) {
         updateBuildingsFromPayload({ buildings: [assignPayload.building] });

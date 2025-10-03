@@ -6,12 +6,53 @@ from typing import Dict, Mapping, Optional, Tuple
 
 from .resources import ALL_RESOURCES, Resource, normalise_mapping
 
-# Building identifiers used across the backend.
+# ---------------------------------------------------------------------------
+# Building identifiers and normalisation helpers
+
 WOODCUTTER_CAMP = "woodcutter_camp"
 LUMBER_HUT = "lumber_hut"
 MINER = "miner"
 FARMER = "farmer"
 ARTISAN = "artisan"
+
+BUILDING_PUBLIC_IDS: Dict[str, str] = {
+    WOODCUTTER_CAMP: "woodcutter_camp",
+    LUMBER_HUT: "lumber_hut",
+    MINER: "miner",
+    FARMER: "farmer",
+    ARTISAN: "artisan",
+}
+
+_BUILDING_ID_LOOKUP: Dict[str, str] = {
+    public_id: type_key for type_key, public_id in BUILDING_PUBLIC_IDS.items()
+}
+
+
+def normalise_building_key(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("El identificador de edificio debe ser una cadena")
+    key = value.strip().lower().replace("-", "_")
+    if not key:
+        raise ValueError("El identificador de edificio está vacío")
+    return key
+
+
+def resolve_building_type(value: str) -> str:
+    key = normalise_building_key(value)
+    if key in BUILDING_PUBLIC_IDS:
+        return key
+    mapped = _BUILDING_ID_LOOKUP.get(key)
+    if mapped:
+        return mapped
+    raise ValueError(f"Identificador de edificio desconocido: {value}")
+
+
+def resolve_building_public_id(value: str) -> str:
+    type_key = resolve_building_type(value)
+    return BUILDING_PUBLIC_IDS[type_key]
+
+# ---------------------------------------------------------------------------
+# Building metadata
 
 BUILDING_NAMES: Dict[str, str] = {
     WOODCUTTER_CAMP: "Woodcutter Camp",
@@ -144,7 +185,12 @@ WORKERS_INICIALES: int = POPULATION_INITIAL
 STARTING_RESOURCES: Dict[Resource, float] = {resource: 0.0 for resource in ALL_RESOURCES}
 
 STARTING_BUILDINGS: Tuple[Mapping[str, object], ...] = (
-    {"type": WOODCUTTER_CAMP, "workers": 0, "enabled": True},
+    {
+        "type": WOODCUTTER_CAMP,
+        "workers": 1,
+        "built": True,
+        "enabled": True,
+    },
 )
 
 SEASON_MODIFIERS: Dict[str, Dict[str, float]] = {

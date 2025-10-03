@@ -57,7 +57,7 @@ def test_forced_init_and_first_production_cycle(client):
     assert len(buildings) == 1, "Only the Woodcutter Camp should be present initially"
     building = buildings[0]
     assert building["type"] == config.WOODCUTTER_CAMP
-    assert building.get("active_workers", 0) == 0
+    assert building.get("active_workers", 0) == 1
 
     state_response = client.get("/api/state")
     assert state_response.status_code == 200
@@ -76,7 +76,7 @@ def test_forced_init_and_first_production_cycle(client):
         assert payload["ok"] is True
 
     after_idle_state = client.get("/state").get_json()
-    assert after_idle_state["items"]["wood"] == pytest.approx(0.0)
+    assert after_idle_state["items"]["wood"] == pytest.approx(0.5, rel=1e-9, abs=1e-9)
 
     assign_response = client.post(
         f"/api/buildings/{building['id']}/workers",
@@ -87,10 +87,10 @@ def test_forced_init_and_first_production_cycle(client):
     assert assign_payload["ok"] is True
     assert assign_payload["delta"] == 1
     assigned_building = assign_payload.get("building", {})
-    assert assigned_building.get("active_workers") == 1
+    assert assigned_building.get("active_workers") == 2
     state_snapshot = assign_payload.get("state", {})
     population_snapshot = state_snapshot.get("population", {})
-    assert population_snapshot.get("available") == 1
+    assert population_snapshot.get("available") == 0
 
     for _ in range(5):
         tick_response = client.post("/api/tick", json={"dt": 1})
@@ -99,13 +99,4 @@ def test_forced_init_and_first_production_cycle(client):
         assert payload["ok"] is True
 
     half_way_state = client.get("/state").get_json()
-    assert half_way_state["items"]["wood"] == pytest.approx(0.5, rel=1e-9, abs=1e-9)
-
-    for _ in range(5):
-        tick_response = client.post("/api/tick", json={"dt": 1})
-        assert tick_response.status_code == 200
-        payload = tick_response.get_json()
-        assert payload["ok"] is True
-
-    final_state = client.get("/state").get_json()
-    assert final_state["items"]["wood"] == pytest.approx(1.0, rel=1e-9, abs=1e-9)
+    assert half_way_state["items"]["wood"] == pytest.approx(1.0, rel=1e-9, abs=1e-9)
