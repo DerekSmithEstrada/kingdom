@@ -62,38 +62,37 @@ def api_tick():
     return jsonify(response)
 
 
-@app.post("/api/buildings/<int:building_id>/assign")
-def api_assign_workers(building_id: int):
-    """Assign workers to a building using the bridge helper."""
+@app.post("/api/buildings/<int:building_id>/workers")
+def api_change_workers(building_id: int):
+    """Apply a worker delta to the target building."""
 
     payload = request.get_json(silent=True) or {}
-    requested = (
-        payload.get("workers")
-        if payload.get("workers") is not None
-        else payload.get("count")
+    delta = payload.get("delta")
+    if delta is None:
+        delta = (
+            payload.get("workers")
+            if payload.get("workers") is not None
+            else payload.get("count")
+        )
+    logger.info(
+        "Worker request: building=%s delta=%s payload_keys=%s",
+        building_id,
+        delta,
+        sorted(payload.keys()),
     )
-    if requested is None:
-        requested = payload.get("assign") or payload.get("number")
-
-    response = ui_bridge.assign_workers(building_id, requested or 0)
-    return jsonify(response)
-
-
-@app.post("/api/buildings/<int:building_id>/unassign")
-def api_unassign_workers(building_id: int):
-    """Unassign workers from a building using the bridge helper."""
-
-    payload = request.get_json(silent=True) or {}
-    requested = (
-        payload.get("workers")
-        if payload.get("workers") is not None
-        else payload.get("count")
+    response = ui_bridge.change_building_workers(building_id, delta)
+    status = 200
+    if not response.get("ok", False):
+        error_code = response.get("error_code")
+        status = 404 if error_code == "building_not_found" else 400
+    logger.info(
+        "Worker response: building=%s delta=%s ok=%s status=%s",
+        building_id,
+        delta,
+        response.get("ok"),
+        status,
     )
-    if requested is None:
-        requested = payload.get("unassign") or payload.get("number")
-
-    response = ui_bridge.unassign_workers(building_id, requested or 0)
-    return jsonify(response)
+    return jsonify(response), status
 
 
 if __name__ == "__main__":

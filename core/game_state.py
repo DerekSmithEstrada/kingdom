@@ -217,31 +217,34 @@ class GameState:
         return ""
 
     # ------------------------------------------------------------------
-    def assign_workers(self, building_id: int, number: int) -> int:
+    def apply_worker_delta(self, building_id: int, delta: int) -> Dict[str, int]:
         with self._lock:
             building = self.buildings.get(building_id)
             if building is None:
                 raise ValueError("Edificio inexistente")
-            change = int(number)
-            if change <= 0:
-                return 0
-            assigned = self.worker_pool.assign_workers(building, change)
-            if assigned > 0:
+
+            change = int(delta)
+            if change == 0:
+                return {"delta": 0, "assigned": int(building.assigned_workers)}
+
+            if change > 0:
+                applied = self.worker_pool.assign_workers(building, change)
+            else:
+                removed = self.worker_pool.unassign_workers(building, abs(change))
+                applied = -removed
+
+            if applied != 0:
                 self._state_version += 1
-            return assigned
+
+            return {"delta": int(applied), "assigned": int(building.assigned_workers)}
+
+    def assign_workers(self, building_id: int, number: int) -> int:
+        result = self.apply_worker_delta(building_id, number)
+        return max(0, result["delta"])
 
     def unassign_workers(self, building_id: int, number: int) -> int:
-        with self._lock:
-            building = self.buildings.get(building_id)
-            if building is None:
-                raise ValueError("Edificio inexistente")
-            change = int(number)
-            if change <= 0:
-                return 0
-            removed = self.worker_pool.unassign_workers(building, change)
-            if removed > 0:
-                self._state_version += 1
-            return removed
+        result = self.apply_worker_delta(building_id, -number)
+        return abs(min(0, result["delta"]))
 
     def get_building(self, building_id: int) -> Optional[Building]:
         return self.buildings.get(building_id)
