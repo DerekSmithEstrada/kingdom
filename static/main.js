@@ -1415,6 +1415,86 @@
   const stackedFlagCheckbox = document.getElementById("stacked-flag-checkbox");
   const stackedViewToggle = document.getElementById("stacked-view-toggle");
 
+  const villagePanel = document.getElementById("view-village");
+  const villageMapRoot = document.getElementById("village-map");
+  const villageMapGrid = document.getElementById("village-grid");
+  const villageOverlay = document.getElementById("village-overlay");
+  const villageLogisticsLegend = document.getElementById("village-logistics-legend");
+  const villageModeButtons = villagePanel
+    ? Array.from(villagePanel.querySelectorAll("[data-village-mode]"))
+    : [];
+  const villageCompactToggle = document.getElementById("village-compact-toggle");
+  const villageCompactLabel = villagePanel
+    ? villagePanel.querySelector("[data-village-compact-label]")
+    : null;
+  const villageHudDisplays = villagePanel
+    ? {
+        villagers: villagePanel.querySelector('[data-village-hud="villagers"]'),
+        free: villagePanel.querySelector('[data-village-hud="free"]'),
+        buildings: villagePanel.querySelector('[data-village-hud="buildings"]'),
+        gold: villagePanel.querySelector('[data-village-hud="gold"]'),
+      }
+    : {
+        villagers: null,
+        free: null,
+        buildings: null,
+        gold: null,
+      };
+  const villageDetail = document.getElementById("village-detail");
+  const villageDetailPlaceholder = villageDetail
+    ? villageDetail.querySelector("[data-village-detail-placeholder]")
+    : null;
+  const villageDetailContent = villageDetail
+    ? villageDetail.querySelector("[data-village-detail-content]")
+    : null;
+  const villageDetailIcon = villageDetail
+    ? villageDetail.querySelector("[data-village-detail-icon]")
+    : null;
+  const villageDetailName = villageDetail
+    ? villageDetail.querySelector("[data-village-detail-name]")
+    : null;
+  const villageDetailSubtitle = villageDetail
+    ? villageDetail.querySelector("[data-village-detail-subtitle]")
+    : null;
+  const villageProgressBar = villageDetail
+    ? villageDetail.querySelector("[data-village-progress-bar]")
+    : null;
+  const villageDetailWorkers = villageDetail
+    ? villageDetail.querySelector("[data-village-detail-workers]")
+    : null;
+  const villageDetailProduction = villageDetail
+    ? villageDetail.querySelector("[data-village-detail-production]")
+    : null;
+  const villageDetailStorage = villageDetail
+    ? villageDetail.querySelector("[data-village-detail-storage]")
+    : null;
+  const villageDetailInputs = villageDetail
+    ? villageDetail.querySelector("[data-village-detail-inputs]")
+    : null;
+  const villageDetailOutputs = villageDetail
+    ? villageDetail.querySelector("[data-village-detail-outputs]")
+    : null;
+
+  const VILLAGE_MODES = ["buildings", "chains", "logistics", "population"];
+  const VILLAGE_SVG_NS = "http://www.w3.org/2000/svg";
+
+  const villageState = {
+    mode: "buildings",
+    compact: false,
+    order: [],
+    selected: null,
+    hovered: null,
+    dragging: null,
+  };
+
+  let villageTileLookup = new Map();
+  let cachedVillageConnections = [];
+  let villageConnectionCounts = new Map();
+  let villageConnectionAdjacency = new Map();
+  let villageConnectionMaxRate = 1;
+  let villageOverlayFrame = null;
+  let villageDropTarget = null;
+
   const buildingElementMap = new Map();
   const pendingWorkerRequests = new Set();
   const stackedWorkerMemory = new Map();
@@ -3062,6 +3142,961 @@
     });
   }
 
+
+  const VILLAGE_RESOURCE_ICONS = {
+    wood: "🪵",
+    sticks: "🥢",
+    stone: "🪨",
+    planks: "🧱",
+    wheat: "🌾",
+    flour: "🌾",
+    bread: "🍞",
+    food: "🍞",
+    fish: "🐟",
+    berries: "🫐",
+    tools: "🛠️",
+    gold: "🪙",
+    happiness: "😊",
+    population: "👥",
+    coal: "⚫",
+    iron: "⛏️",
+  };
+
+  function getVillageResourceIcon(resource) {
+    if (!resource) {
+      return "📦";
+    }
+    const key = String(resource).toLowerCase();
+    return VILLAGE_RESOURCE_ICONS[key] || "📦";
+  }
+
+  function getVillageTileKey(building) {
+    if (!building) {
+      return null;
+    }
+    if (building.id !== undefined && building.id !== null && String(building.id) !== "") {
+      return String(building.id);
+    }
+    if (building.type) {
+      return String(building.type);
+    }
+    if (building.name) {
+      return normaliseKey(building.name);
+    }
+    return null;
+  }
+
+  function findBuildingByTileKey(key) {
+    if (!key) {
+      return null;
+    }
+    const target = String(key);
+    return (
+      state.buildings.find((candidate) => getVillageTileKey(candidate) === target) || null
+    );
+  }
+
+  function ensureVillageOrder(buildings) {
+    if (!Array.isArray(villageState.order)) {
+      villageState.order = [];
+    }
+    const validKeys = new Set();
+    buildings.forEach((building) => {
+      const key = getVillageTileKey(building);
+      if (key) {
+        validKeys.add(key);
+      }
+    });
+    const nextOrder = [];
+    villageState.order.forEach((key) => {
+      if (validKeys.has(key)) {
+        nextOrder.push(key);
+        validKeys.delete(key);
+      }
+    });
+    const appended = new Set(nextOrder);
+    buildings.forEach((building) => {
+      const key = getVillageTileKey(building);
+      if (!key || appended.has(key)) {
+        return;
+      }
+      nextOrder.push(key);
+      appended.add(key);
+    });
+    villageState.order = nextOrder;
+  }
+
+  function isLogisticsHub(building) {
+    if (!building) {
+      return false;
+    }
+    const role = String(building.role || "").toLowerCase();
+    if (role.includes("storage") || role.includes("warehouse") || role.includes("logistic")) {
+      return true;
+    }
+    const category = String(building.category || "").toLowerCase();
+    return category.includes("logistic") || category.includes("storage");
+  }
+
+  function getVillageBuildingStatus(building) {
+    if (!building) {
+      return { key: "planned", label: "Unavailable" };
+    }
+    const builtCount = Math.max(0, Number(building.built) || 0);
+    const reason = typeof building.reason === "string" ? building.reason : null;
+    if (builtCount <= 0) {
+      return { key: "planned", label: "Planned" };
+    }
+    if (reason === "missing_input") {
+      const missing = resolveMissingResource(building);
+      return {
+        key: "waiting",
+        label: missing ? `Waiting (${formatResourceKey(missing)})` : "Waiting for input",
+      };
+    }
+    if (reason === "no_workers") {
+      return { key: "waiting", label: "No workers" };
+    }
+    if (reason === "no_capacity") {
+      return { key: "blocked", label: "Storage full" };
+    }
+    if (reason === "inactive") {
+      return { key: "waiting", label: "Inactive" };
+    }
+    if (building.can_produce === false && !reason) {
+      return { key: "waiting", label: "Inactive" };
+    }
+    const effective = Number(building.effective_rate);
+    const workers = getBuildingAssignedWorkers(building);
+    if (Number.isFinite(effective) && effective <= 0 && workers <= 0) {
+      return { key: "waiting", label: "Idle" };
+    }
+    return { key: "active", label: "Active" };
+  }
+
+  function getVillageProductionSummary(building) {
+    if (!building) {
+      return "—";
+    }
+    const primary = computePrimaryOutput(building);
+    const resource = primary.resource;
+    const perMinute = Number(
+      resource ? computeAssignedOutputPerMinute(building, resource) : 0
+    );
+    if (Number.isFinite(perMinute) && perMinute > 0) {
+      return `+${formatAmount(perMinute)} ${formatResourceKey(resource)}/min`;
+    }
+    if (Number.isFinite(perMinute) && perMinute < 0) {
+      return `${formatAmount(perMinute)} ${formatResourceKey(resource)}/min`;
+    }
+    const status = getVillageBuildingStatus(building);
+    if (building.reason === "missing_input") {
+      const missing = resolveMissingResource(building);
+      return missing ? `Waiting for ${formatResourceKey(missing)}` : status.label;
+    }
+    if (building.reason === "no_workers") {
+      return "Assign workers";
+    }
+    if (building.reason === "no_capacity") {
+      return "Storage full";
+    }
+    return status.label;
+  }
+
+  function formatSeconds(value) {
+    const numeric = Math.max(0, Math.floor(Number(value) || 0));
+    if (!Number.isFinite(numeric)) {
+      return "0s";
+    }
+    if (numeric >= 60) {
+      const minutes = Math.floor(numeric / 60);
+      const seconds = numeric % 60;
+      if (seconds === 0) {
+        return `${minutes}m`;
+      }
+      return `${minutes}m ${seconds}s`;
+    }
+    return `${numeric}s`;
+  }
+
+  function formatVillageEta(building) {
+    if (!building) {
+      return null;
+    }
+    const eta = Number(building.pending_eta);
+    if (Number.isFinite(eta) && eta > 0) {
+      return `Next delivery in ${formatSeconds(eta)}`;
+    }
+    const cycle = Number(building.cycle_time);
+    if (Number.isFinite(cycle) && cycle > 0) {
+      return `Cycle ${formatSeconds(cycle)}`;
+    }
+    return null;
+  }
+
+  function createVillageChainChips(resources) {
+    const entries = Object.entries(resources || {}).filter(([, amount]) => {
+      const numeric = Number(amount);
+      return Number.isFinite(numeric) && numeric !== 0;
+    });
+    return entries.slice(0, 3).map(([resource, amount]) => {
+      const chip = document.createElement("span");
+      chip.className = "village-tile__chip";
+      chip.textContent = `${getVillageResourceIcon(resource)} ${formatResourceKey(resource)}`;
+      chip.title = `${formatAmount(Math.abs(Number(amount) || 0))} per cycle`;
+      return chip;
+    });
+  }
+
+  function createVillageTile(building) {
+    const key = getVillageTileKey(building);
+    const tile = document.createElement("button");
+    tile.type = "button";
+    tile.className = "village-tile";
+    tile.dataset.buildingId = key;
+    tile.setAttribute("role", "listitem");
+    tile.draggable = true;
+
+    const icon = document.createElement("span");
+    icon.className = "village-tile__icon";
+    icon.textContent = building.icon || "🏡";
+
+    const header = document.createElement("div");
+    header.className = "village-tile__header";
+
+    const name = document.createElement("span");
+    name.className = "village-tile__name";
+    name.textContent = building.name || formatResourceKey(key || "building");
+
+    const levelBadge = document.createElement("span");
+    levelBadge.className = "village-tile__level";
+    const levelValue = Number(building.level) || 1;
+    levelBadge.textContent = `Lv.${levelValue}`;
+
+    header.append(name, levelBadge);
+
+    const meta = document.createElement("div");
+    meta.className = "village-tile__meta";
+    const workers = document.createElement("span");
+    workers.className = "village-tile__workers";
+    const assigned = getBuildingAssignedWorkers(building);
+    const capacity = getCapacity(building);
+    workers.textContent = `👷 ${formatAmount(assigned)}/${formatAmount(capacity)}`;
+
+    const statusBadge = document.createElement("span");
+    statusBadge.className = "village-tile__state";
+    const status = getVillageBuildingStatus(building);
+    statusBadge.textContent = status.label;
+    tile.dataset.status = status.key;
+
+    meta.append(workers, statusBadge);
+
+    const modeRow = document.createElement("div");
+    modeRow.className = "village-tile__mode";
+
+    tile.append(icon, header, meta, modeRow);
+
+    if (villageState.mode === "chains") {
+      const chainRow = document.createElement("div");
+      chainRow.className = "village-tile__chain";
+      const inputChips = createVillageChainChips(building.inputs);
+      if (inputChips.length) {
+        inputChips.forEach((chip) => chainRow.appendChild(chip));
+      } else {
+        const emptyChip = document.createElement("span");
+        emptyChip.className = "village-tile__chip";
+        emptyChip.textContent = "No input";
+        chainRow.appendChild(emptyChip);
+      }
+      const arrow = document.createElement("span");
+      arrow.className = "village-tile__arrow";
+      arrow.textContent = "→";
+      chainRow.appendChild(arrow);
+      const outputChips = createVillageChainChips(building.outputs);
+      if (outputChips.length) {
+        outputChips.forEach((chip) => chainRow.appendChild(chip));
+      } else {
+        const emptyChip = document.createElement("span");
+        emptyChip.className = "village-tile__chip";
+        emptyChip.textContent = "No output";
+        chainRow.appendChild(emptyChip);
+      }
+      tile.appendChild(chainRow);
+      modeRow.textContent = getVillageProductionSummary(building);
+    } else if (villageState.mode === "logistics") {
+      const counts = villageConnectionCounts.get(key) || {
+        incoming: 0,
+        outgoing: 0,
+        total: 0,
+      };
+      const routes = document.createElement("div");
+      routes.className = "village-tile__routes";
+      const outSpan = document.createElement("span");
+      outSpan.dataset.direction = "out";
+      outSpan.textContent = `${counts.outgoing || 0} out`;
+      const inSpan = document.createElement("span");
+      inSpan.dataset.direction = "in";
+      inSpan.textContent = `${counts.incoming || 0} in`;
+      routes.append(outSpan, inSpan);
+      tile.appendChild(routes);
+      modeRow.textContent = getVillageProductionSummary(building);
+      if (counts.total >= 3 || isLogisticsHub(building)) {
+        tile.classList.add("village-tile--hub");
+      }
+    } else if (villageState.mode === "population") {
+      const housing = Number(building.capacityPerBuilding);
+      const housingValue = Number.isFinite(housing) && housing > 0 ? housing : capacity;
+      modeRow.textContent = `Housing ${formatAmount(Math.max(0, housingValue))} • Assigned ${formatAmount(
+        assigned
+      )}`;
+    } else {
+      modeRow.textContent = getVillageProductionSummary(building);
+    }
+
+    const titleParts = [
+      building.name || formatResourceKey(key || "building"),
+      getVillageProductionSummary(building),
+      formatVillageEta(building),
+    ].filter(Boolean);
+    const titleText = titleParts.join(" • ");
+    tile.title = titleText;
+    tile.setAttribute("aria-label", titleText);
+
+    return tile;
+  }
+
+  function populateVillageIoList(listElement, resources, direction) {
+    if (!listElement) {
+      return;
+    }
+    listElement.innerHTML = "";
+    const entries = Object.entries(resources || {}).filter(([, amount]) => {
+      const numeric = Number(amount);
+      return Number.isFinite(numeric) && numeric !== 0;
+    });
+    if (!entries.length) {
+      const emptyItem = document.createElement("li");
+      emptyItem.textContent = "None";
+      emptyItem.style.opacity = "0.6";
+      listElement.appendChild(emptyItem);
+      return;
+    }
+    entries.slice(0, 6).forEach(([resource, amount]) => {
+      const item = document.createElement("li");
+      const icon = document.createElement("span");
+      icon.textContent = getVillageResourceIcon(resource);
+      const label = document.createElement("span");
+      label.textContent = `${formatResourceKey(resource)} ${formatAmount(
+        Math.abs(Number(amount) || 0)
+      )}`;
+      item.append(icon, label);
+      listElement.appendChild(item);
+    });
+  }
+
+  function resetVillageDetail() {
+    if (villageDetailPlaceholder) {
+      villageDetailPlaceholder.hidden = false;
+    }
+    if (villageDetailContent) {
+      villageDetailContent.hidden = true;
+    }
+  }
+
+  function populateVillageDetail(building) {
+    if (!villageDetailContent || !villageDetailPlaceholder) {
+      return;
+    }
+    villageDetailPlaceholder.hidden = true;
+    villageDetailContent.hidden = false;
+    if (villageDetailIcon) {
+      villageDetailIcon.textContent = building.icon || "🏡";
+    }
+    if (villageDetailName) {
+      villageDetailName.textContent = building.name || formatResourceKey("building");
+    }
+    if (villageDetailSubtitle) {
+      const level = Number(building.level) || 1;
+      const status = getVillageBuildingStatus(building);
+      villageDetailSubtitle.textContent = `Level ${level} • ${status.label}`;
+    }
+    if (villageProgressBar) {
+      const eta = Number(building.pending_eta);
+      const cycle = Number(building.cycle_time);
+      let progress = 0;
+      if (Number.isFinite(eta) && Number.isFinite(cycle) && cycle > 0) {
+        progress = Math.max(0, Math.min(1, 1 - eta / cycle));
+      }
+      villageProgressBar.style.width = `${(progress * 100).toFixed(1)}%`;
+    }
+    if (villageDetailWorkers) {
+      const workers = getBuildingAssignedWorkers(building);
+      const capacity = getCapacity(building);
+      villageDetailWorkers.textContent = `${formatAmount(workers)}/${formatAmount(capacity)} workers`;
+    }
+    if (villageDetailProduction) {
+      villageDetailProduction.textContent = getVillageProductionSummary(building);
+    }
+    if (villageDetailStorage) {
+      const summary = formatStorageSummary(building);
+      villageDetailStorage.textContent = summary || "—";
+    }
+    populateVillageIoList(villageDetailInputs, building.inputs, "input");
+    populateVillageIoList(villageDetailOutputs, building.outputs, "output");
+    const upgradeButton = villageDetail
+      ? villageDetail.querySelector('[data-village-action="upgrade"]')
+      : null;
+    const demolishButton = villageDetail
+      ? villageDetail.querySelector('[data-village-action="demolish"]')
+      : null;
+    const buildingId = building.id || building.type;
+    if (upgradeButton) {
+      upgradeButton.dataset.buildingId = buildingId;
+      upgradeButton.disabled = false;
+    }
+    if (demolishButton) {
+      demolishButton.dataset.buildingId = buildingId;
+      demolishButton.disabled = !(Number(building.built) > 0);
+    }
+  }
+
+  function updateVillageDetailView() {
+    if (!villageDetail) {
+      return;
+    }
+    if (!villageState.selected) {
+      resetVillageDetail();
+      return;
+    }
+    const building = findBuildingByTileKey(villageState.selected);
+    if (!building) {
+      resetVillageDetail();
+      return;
+    }
+    populateVillageDetail(building);
+  }
+
+  function renderVillageHud() {
+    if (!villageHudDisplays.villagers) {
+      return;
+    }
+    const villagers = Number(state.population.current) || 0;
+    const free = Number(state.population.available) || 0;
+    const buildingTotal = state.buildings.reduce((total, building) => {
+      const built = Number(building && building.built);
+      return total + (Number.isFinite(built) ? Math.max(0, built) : 0);
+    }, 0);
+    const goldValue = Number(state.resources && state.resources.gold);
+    villageHudDisplays.villagers.textContent = formatAmount(villagers);
+    villageHudDisplays.free.textContent = formatAmount(free);
+    villageHudDisplays.buildings.textContent = formatAmount(buildingTotal);
+    villageHudDisplays.gold.textContent = formatAmount(Number.isFinite(goldValue) ? goldValue : 0);
+  }
+
+  function applyVillageSelection() {
+    villageTileLookup.forEach((entry, key) => {
+      entry.element.classList.toggle("is-selected", villageState.selected === key);
+    });
+  }
+
+  function updateVillageModeControls() {
+    villageModeButtons.forEach((button) => {
+      const mode = button.dataset.villageMode;
+      const isActive = mode === villageState.mode;
+      button.classList.toggle("is-active", isActive);
+      button.setAttribute("aria-selected", isActive ? "true" : "false");
+      button.tabIndex = isActive ? 0 : -1;
+    });
+  }
+
+  function updateVillageCompactToggle() {
+    if (!villageCompactToggle) {
+      return;
+    }
+    villageCompactToggle.setAttribute(
+      "aria-pressed",
+      villageState.compact ? "true" : "false"
+    );
+    if (villageCompactLabel) {
+      villageCompactLabel.textContent = villageState.compact
+        ? "Expanded view"
+        : "Compact view";
+    }
+  }
+
+  function updateVillageMapMode() {
+    if (villageMapRoot) {
+      villageMapRoot.dataset.mode = villageState.mode;
+    }
+    if (villageLogisticsLegend) {
+      villageLogisticsLegend.hidden = villageState.mode !== "logistics";
+    }
+  }
+
+  function renderVillageView() {
+    if (!villageMapGrid) {
+      return;
+    }
+    const buildings = state.buildings.slice();
+    ensureVillageOrder(buildings);
+    const activeMode = VILLAGE_MODES.includes(villageState.mode)
+      ? villageState.mode
+      : "buildings";
+    villageState.mode = activeMode;
+    if (activeMode === "logistics") {
+      const connectionData = computeVillageConnections(buildings);
+      cachedVillageConnections = connectionData.connections;
+      villageConnectionCounts = connectionData.counts;
+      villageConnectionAdjacency = connectionData.adjacency;
+      villageConnectionMaxRate = connectionData.maxRate;
+    } else {
+      cachedVillageConnections = [];
+      villageConnectionCounts = new Map();
+      villageConnectionAdjacency = new Map();
+      villageConnectionMaxRate = 1;
+    }
+    const fragment = document.createDocumentFragment();
+    const tileMap = new Map();
+    villageState.order.forEach((key) => {
+      const building = buildings.find((candidate) => getVillageTileKey(candidate) === key);
+      if (!building) {
+        return;
+      }
+      const tile = createVillageTile(building);
+      fragment.appendChild(tile);
+      tileMap.set(key, { element: tile });
+    });
+    villageMapGrid.innerHTML = "";
+    villageMapGrid.appendChild(fragment);
+    villageMapGrid.classList.toggle("is-compact", Boolean(villageState.compact));
+    villageTileLookup = tileMap;
+    if (villageState.selected && !villageTileLookup.has(villageState.selected)) {
+      villageState.selected = null;
+    }
+    updateVillageCompactToggle();
+    updateVillageModeControls();
+    updateVillageMapMode();
+    applyVillageSelection();
+    const highlightKey = villageState.hovered || villageState.selected || null;
+    highlightVillageConnections(highlightKey);
+    renderVillageHud();
+    updateVillageDetailView();
+    scheduleVillageOverlayUpdate();
+  }
+
+  function setVillageHover(key) {
+    villageState.hovered = key;
+    const target = key || villageState.selected || null;
+    highlightVillageConnections(target);
+  }
+
+  function highlightVillageConnections(buildingKey) {
+    villageTileLookup.forEach((entry, key) => {
+      const element = entry.element;
+      const isSelf = Boolean(buildingKey) && key === buildingKey;
+      let isLinked = false;
+      if (buildingKey && villageConnectionAdjacency.has(buildingKey)) {
+        const adjacency = villageConnectionAdjacency.get(buildingKey);
+        isLinked = adjacency.outgoing.has(key) || adjacency.incoming.has(key);
+      }
+      if (!isLinked && buildingKey && villageConnectionAdjacency.has(key)) {
+        const adjacency = villageConnectionAdjacency.get(key);
+        isLinked = adjacency.outgoing.has(buildingKey) || adjacency.incoming.has(buildingKey);
+      }
+      const shouldDim =
+        villageState.mode === "logistics" && Boolean(buildingKey) && !isSelf && !isLinked;
+      element.classList.toggle("is-hovered", isSelf);
+      element.classList.toggle("is-linked", Boolean(buildingKey && !isSelf && isLinked));
+      element.classList.toggle("is-dimmed", shouldDim);
+    });
+    if (!villageOverlay || villageState.mode !== "logistics") {
+      return;
+    }
+    const routes = villageOverlay.querySelectorAll(".village-overlay__route");
+    routes.forEach((route) => {
+      if (!buildingKey) {
+        route.classList.remove("is-active", "is-dimmed");
+        return;
+      }
+      const isMatch =
+        route.dataset.from === buildingKey || route.dataset.to === buildingKey;
+      route.classList.toggle("is-active", isMatch);
+      route.classList.toggle("is-dimmed", !isMatch);
+    });
+  }
+
+  function computeVillageConnections(buildings) {
+    const connections = [];
+    const counts = new Map();
+    const adjacency = new Map();
+    let maxRate = 0;
+    const processed = buildings.filter(Boolean);
+    const ensureCounts = (key) => {
+      if (!counts.has(key)) {
+        counts.set(key, { incoming: 0, outgoing: 0, total: 0 });
+      }
+      return counts.get(key);
+    };
+    const ensureAdjacency = (key) => {
+      if (!adjacency.has(key)) {
+        adjacency.set(key, { incoming: new Set(), outgoing: new Set() });
+      }
+      return adjacency.get(key);
+    };
+    processed.forEach((producer) => {
+      const outputs = producer.outputs || {};
+      const producerKey = getVillageTileKey(producer);
+      if (!producerKey) {
+        return;
+      }
+      Object.entries(outputs).forEach(([resource, value]) => {
+        const rate = Number(value);
+        if (!Number.isFinite(rate) || rate <= 0) {
+          return;
+        }
+        processed.forEach((consumer) => {
+          if (consumer === producer) {
+            return;
+          }
+          const inputs = consumer.inputs || {};
+          const demand = Number(inputs[resource]);
+          if (!Number.isFinite(demand) || demand <= 0) {
+            return;
+          }
+          const consumerKey = getVillageTileKey(consumer);
+          if (!consumerKey) {
+            return;
+          }
+          connections.push({
+            from: producer,
+            to: consumer,
+            fromKey: producerKey,
+            toKey: consumerKey,
+            resource,
+            rate,
+          });
+          maxRate = Math.max(maxRate, Math.abs(rate));
+          const outCounts = ensureCounts(producerKey);
+          outCounts.outgoing += 1;
+          outCounts.total += 1;
+          const inCounts = ensureCounts(consumerKey);
+          inCounts.incoming += 1;
+          inCounts.total += 1;
+          const outAdj = ensureAdjacency(producerKey);
+          outAdj.outgoing.add(consumerKey);
+          const inAdj = ensureAdjacency(consumerKey);
+          inAdj.incoming.add(producerKey);
+        });
+      });
+    });
+    if (!Number.isFinite(maxRate) || maxRate <= 0) {
+      maxRate = 1;
+    }
+    return { connections, counts, adjacency, maxRate };
+  }
+
+  function scheduleVillageOverlayUpdate() {
+    if (!villageOverlay || !villageMapRoot) {
+      return;
+    }
+    if (typeof window === "undefined") {
+      updateVillageOverlay();
+      return;
+    }
+    if (villageOverlayFrame !== null) {
+      return;
+    }
+    villageOverlayFrame = window.requestAnimationFrame(() => {
+      villageOverlayFrame = null;
+      updateVillageOverlay();
+    });
+  }
+
+  function updateVillageOverlay() {
+    if (!villageOverlay || villageState.mode !== "logistics" || !villageMapRoot) {
+      if (villageOverlay) {
+        villageOverlay.innerHTML = "";
+      }
+      return;
+    }
+    const rect = villageMapRoot.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+    villageOverlay.innerHTML = "";
+    villageOverlay.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    villageOverlay.setAttribute("width", width);
+    villageOverlay.setAttribute("height", height);
+    const defs = document.createElementNS(VILLAGE_SVG_NS, "defs");
+    const marker = document.createElementNS(VILLAGE_SVG_NS, "marker");
+    marker.id = "village-arrow";
+    marker.setAttribute("markerWidth", "6");
+    marker.setAttribute("markerHeight", "6");
+    marker.setAttribute("refX", "5.5");
+    marker.setAttribute("refY", "3");
+    marker.setAttribute("orient", "auto");
+    const markerPath = document.createElementNS(VILLAGE_SVG_NS, "path");
+    markerPath.setAttribute("d", "M0 0 L6 3 L0 6 z");
+    markerPath.setAttribute("fill", "rgba(56, 189, 248, 0.85)");
+    marker.appendChild(markerPath);
+    defs.appendChild(marker);
+    villageOverlay.appendChild(defs);
+    const group = document.createElementNS(VILLAGE_SVG_NS, "g");
+    group.classList.add("village-overlay__routes");
+    villageOverlay.appendChild(group);
+    cachedVillageConnections.forEach((connection) => {
+      const fromEntry = villageTileLookup.get(connection.fromKey);
+      const toEntry = villageTileLookup.get(connection.toKey);
+      if (!fromEntry || !toEntry) {
+        return;
+      }
+      const fromRect = fromEntry.element.getBoundingClientRect();
+      const toRect = toEntry.element.getBoundingClientRect();
+      const startX = fromRect.left - rect.left + fromRect.width / 2;
+      const startY = fromRect.top - rect.top + fromRect.height / 2;
+      const endX = toRect.left - rect.left + toRect.width / 2;
+      const endY = toRect.top - rect.top + toRect.height / 2;
+      const dx = endX - startX;
+      const dy = endY - startY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      const curve = Math.min(60, distance / 3);
+      const controlX = startX + dx / 2;
+      const controlY = startY + dy / 2 - curve;
+      const path = document.createElementNS(VILLAGE_SVG_NS, "path");
+      path.classList.add("village-overlay__route");
+      path.dataset.from = connection.fromKey;
+      path.dataset.to = connection.toKey;
+      path.dataset.resource = connection.resource;
+      const widthFactor = Math.max(0.35, Math.min(1.5, connection.rate / villageConnectionMaxRate));
+      path.setAttribute(
+        "d",
+        `M ${startX.toFixed(1)} ${startY.toFixed(1)} Q ${controlX.toFixed(1)} ${controlY.toFixed(
+          1
+        )} ${endX.toFixed(1)} ${endY.toFixed(1)}`
+      );
+      path.setAttribute("stroke-width", (1.5 + widthFactor * 2.4).toFixed(2));
+      path.setAttribute("marker-end", "url(#village-arrow)");
+      group.appendChild(path);
+    });
+    const highlightKey = villageState.hovered || villageState.selected || null;
+    if (highlightKey) {
+      highlightVillageConnections(highlightKey);
+    }
+  }
+
+  function handleVillageModeClick(event) {
+    const button = event.target.closest("[data-village-mode]");
+    if (!button) {
+      return;
+    }
+    const mode = button.dataset.villageMode;
+    if (!mode || !VILLAGE_MODES.includes(mode)) {
+      return;
+    }
+    if (villageState.mode === mode) {
+      return;
+    }
+    villageState.mode = mode;
+    renderVillageView();
+  }
+
+  function handleVillageCompactToggle(event) {
+    event.preventDefault();
+    villageState.compact = !villageState.compact;
+    updateVillageCompactToggle();
+    if (villageMapGrid) {
+      villageMapGrid.classList.toggle("is-compact", villageState.compact);
+    }
+    scheduleVillageOverlayUpdate();
+  }
+
+  function handleVillageTileClick(event) {
+    const tile = event.target.closest(".village-tile");
+    if (!tile) {
+      return;
+    }
+    event.preventDefault();
+    const key = tile.dataset.buildingId;
+    if (!key) {
+      return;
+    }
+    villageState.selected = key;
+    applyVillageSelection();
+    updateVillageDetailView();
+    setVillageHover(key);
+  }
+
+  function handleVillagePointerOver(event) {
+    const tile = event.target.closest(".village-tile");
+    if (!tile) {
+      return;
+    }
+    const key = tile.dataset.buildingId;
+    if (!key) {
+      return;
+    }
+    setVillageHover(key);
+  }
+
+  function handleVillagePointerOut(event) {
+    const tile = event.target.closest(".village-tile");
+    if (!tile) {
+      return;
+    }
+    const related = event.relatedTarget;
+    if (related && tile.contains(related)) {
+      return;
+    }
+    setVillageHover(null);
+  }
+
+  function handleVillageFocusIn(event) {
+    const tile = event.target.closest(".village-tile");
+    if (!tile) {
+      return;
+    }
+    const key = tile.dataset.buildingId;
+    if (!key) {
+      return;
+    }
+    setVillageHover(key);
+  }
+
+  function handleVillageFocusOut(event) {
+    const tile = event.target.closest(".village-tile");
+    if (!tile) {
+      return;
+    }
+    const related = event.relatedTarget;
+    if (related && tile.contains(related)) {
+      return;
+    }
+    setVillageHover(null);
+  }
+
+  function handleVillageKeyDown(event) {
+    const tile = event.target.closest(".village-tile");
+    if (!tile) {
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      const key = tile.dataset.buildingId;
+      if (key) {
+        villageState.selected = key;
+        applyVillageSelection();
+        updateVillageDetailView();
+        setVillageHover(key);
+      }
+    }
+  }
+
+function handleVillageDragStart(event) {
+  const tile = event.target.closest(".village-tile");
+  if (!tile) {
+    return;
+  }
+  const key = tile.dataset.buildingId;
+  if (!key) {
+    return;
+  }
+  villageState.dragging = key;
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", key);
+  tile.classList.add("is-hovered");
+  setVillageHover(key);
+}
+
+function handleVillageDragEnd(event) {
+  const tile = event.target.closest(".village-tile");
+  if (tile) {
+    tile.classList.remove("is-hovered");
+  }
+  if (villageDropTarget) {
+    villageDropTarget.classList.remove("is-drop-target");
+    villageDropTarget = null;
+  }
+  villageState.dragging = null;
+  scheduleVillageOverlayUpdate();
+  setVillageHover(villageState.selected);
+}
+
+  function handleVillageDragOver(event) {
+    if (!villageState.dragging) {
+      return;
+    }
+    const tile = event.target.closest(".village-tile");
+    if (!tile || tile.dataset.buildingId === villageState.dragging) {
+      return;
+    }
+    event.preventDefault();
+    if (villageDropTarget && villageDropTarget !== tile) {
+      villageDropTarget.classList.remove("is-drop-target");
+    }
+    villageDropTarget = tile;
+    tile.classList.add("is-drop-target");
+  }
+
+  function handleVillageDragLeave(event) {
+    const tile = event.target.closest(".village-tile");
+    if (!tile || tile !== villageDropTarget) {
+      return;
+    }
+    const related = event.relatedTarget;
+    if (related && tile.contains(related)) {
+      return;
+    }
+    tile.classList.remove("is-drop-target");
+    villageDropTarget = null;
+  }
+
+  function handleVillageDrop(event) {
+    if (!villageState.dragging) {
+      return;
+    }
+    const tile = event.target.closest(".village-tile");
+    if (!tile) {
+      return;
+    }
+    event.preventDefault();
+    const fromKey = villageState.dragging;
+    const toKey = tile.dataset.buildingId;
+    if (!toKey || fromKey === toKey) {
+      return;
+    }
+    const order = villageState.order.slice();
+    const fromIndex = order.indexOf(fromKey);
+    const toIndex = order.indexOf(toKey);
+    if (fromIndex === -1 || toIndex === -1) {
+      return;
+    }
+    order.splice(fromIndex, 1);
+    const insertionIndex = fromIndex < toIndex ? toIndex - 1 : toIndex;
+    order.splice(insertionIndex, 0, fromKey);
+    villageState.order = order;
+    villageState.dragging = null;
+    villageDropTarget = null;
+    renderVillageView();
+  }
+
+  async function handleVillageDetailClick(event) {
+    const button = event.target.closest("button[data-village-action]");
+    if (!button) {
+      return;
+    }
+    const buildingId = button.dataset.buildingId;
+    if (!buildingId) {
+      return;
+    }
+    if (button.dataset.villageAction === "upgrade") {
+      await buildStructure(buildingId);
+    } else if (button.dataset.villageAction === "demolish") {
+      await demolishStructure(buildingId);
+    }
+  }
+
   function renderFilterControls() {
     const ui = getBuildingUiState();
     if (categoryChipsContainer) {
@@ -3181,6 +4216,7 @@
 
     renderFilterControls();
     updateStackedUi(showStacked, viewMode, stackedFilters);
+    renderVillageView();
 
     if (showStacked) {
       renderStackedBuildingsList(state.buildings, stackedFilters);
@@ -3767,6 +4803,7 @@
     if (tooltipTarget) {
       hideJobResourceTooltip(true);
     }
+    scheduleVillageOverlayUpdate();
   }
 
   function updateJobsCount() {
@@ -4393,6 +5430,10 @@
         state.population.available = nextPopulation.available;
         changed = true;
       }
+    }
+
+    if (changed) {
+      renderVillageHud();
     }
 
     return changed;
@@ -5298,6 +6339,29 @@
   jobsList.addEventListener("focusin", jobResourceTooltipShowHandler);
   jobsList.addEventListener("focusout", jobResourceTooltipHideHandler);
 
+  villageModeButtons.forEach((button) => {
+    button.addEventListener("click", handleVillageModeClick);
+  });
+  if (villageCompactToggle) {
+    villageCompactToggle.addEventListener("click", handleVillageCompactToggle);
+  }
+  if (villageMapGrid) {
+    villageMapGrid.addEventListener("click", handleVillageTileClick);
+    villageMapGrid.addEventListener("mouseover", handleVillagePointerOver);
+    villageMapGrid.addEventListener("mouseout", handleVillagePointerOut);
+    villageMapGrid.addEventListener("focusin", handleVillageFocusIn);
+    villageMapGrid.addEventListener("focusout", handleVillageFocusOut);
+    villageMapGrid.addEventListener("keydown", handleVillageKeyDown);
+    villageMapGrid.addEventListener("dragstart", handleVillageDragStart);
+    villageMapGrid.addEventListener("dragend", handleVillageDragEnd);
+    villageMapGrid.addEventListener("dragover", handleVillageDragOver);
+    villageMapGrid.addEventListener("dragleave", handleVillageDragLeave);
+    villageMapGrid.addEventListener("drop", handleVillageDrop);
+  }
+  if (villageDetail) {
+    villageDetail.addEventListener("click", handleVillageDetailClick);
+  }
+
   if (typeof window !== "undefined") {
     window.addEventListener("scroll", handleGlobalScroll, { passive: true });
     window.addEventListener("resize", handleGlobalScroll);
@@ -5313,6 +6377,7 @@
   updateJobsCount();
   updateChips();
   renderSeason(state.season);
+  updateVillageCompactToggle();
 
   startWoodPolling();
 

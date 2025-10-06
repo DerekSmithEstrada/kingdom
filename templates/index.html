@@ -360,11 +360,204 @@
       data-view-panel="village"
       hidden
     >
-      <section class="panel">
-        <div class="panel-header">
+      <section class="panel panel--village">
+        <div class="panel-header panel-header--village">
           <h2 class="panel-title">Village design</h2>
+          <div class="village-hud" aria-live="polite">
+            <div class="village-hud__item">
+              <span class="village-hud__label">Villagers</span>
+              <span class="village-hud__value" data-village-hud="villagers">0</span>
+            </div>
+            <div class="village-hud__item">
+              <span class="village-hud__label">Free</span>
+              <span class="village-hud__value" data-village-hud="free">0</span>
+            </div>
+            <div class="village-hud__item">
+              <span class="village-hud__label">Buildings</span>
+              <span class="village-hud__value" data-village-hud="buildings">0</span>
+            </div>
+            <div class="village-hud__item">
+              <span class="village-hud__label">Gold</span>
+              <span class="village-hud__value" data-village-hud="gold">0</span>
+            </div>
+          </div>
         </div>
-        <p class="placeholder-text">Village layout visualisation coming soon.</p>
+        <div class="village-layout">
+          <div
+            class="village-toolbar"
+            role="tablist"
+            aria-label="Village view modes"
+          >
+            <button
+              class="village-toolbar__mode is-active"
+              type="button"
+              data-village-mode="buildings"
+              role="tab"
+              aria-selected="true"
+            >
+              Buildings
+            </button>
+            <button
+              class="village-toolbar__mode"
+              type="button"
+              data-village-mode="chains"
+              role="tab"
+              aria-selected="false"
+            >
+              Production Chains
+            </button>
+            <button
+              class="village-toolbar__mode"
+              type="button"
+              data-village-mode="logistics"
+              role="tab"
+              aria-selected="false"
+            >
+              Logistics
+            </button>
+            <button
+              class="village-toolbar__mode"
+              type="button"
+              data-village-mode="population"
+              role="tab"
+              aria-selected="false"
+            >
+              Population
+            </button>
+            <div class="village-toolbar__spacer" aria-hidden="true"></div>
+            <button
+              class="village-toolbar__toggle"
+              type="button"
+              id="village-compact-toggle"
+              aria-pressed="false"
+            >
+              <span aria-hidden="true" class="village-toolbar__toggle-icon">🗺️</span>
+              <span
+                class="village-toolbar__toggle-label"
+                data-village-compact-label
+              >
+                Compact view
+              </span>
+            </button>
+          </div>
+          <div class="village-layout__content">
+            <div class="village-map" id="village-map" data-village-map>
+              <div class="village-map__grid" id="village-grid" role="list"></div>
+              <svg
+                class="village-map__overlay"
+                id="village-overlay"
+                aria-hidden="true"
+              ></svg>
+              <div class="village-logistics-legend" id="village-logistics-legend" hidden>
+                <p class="village-logistics-legend__title">Logistics view</p>
+                <ul class="village-logistics-legend__list">
+                  <li>
+                    <span class="legend-dot legend-dot--active"></span>
+                    Active route
+                  </li>
+                  <li>
+                    <span class="legend-dot legend-dot--waiting"></span>
+                    Waiting on input
+                  </li>
+                  <li>
+                    <span class="legend-dot legend-dot--blocked"></span>
+                    Storage full
+                  </li>
+                </ul>
+                <p class="village-logistics-legend__hint">
+                  Switch modes or drag tiles to reorganise your village.
+                </p>
+              </div>
+            </div>
+            <aside class="village-detail" id="village-detail" aria-live="polite">
+              <div
+                class="village-detail__placeholder"
+                data-village-detail-placeholder
+              >
+                Select a building tile to see its status.
+              </div>
+              <div
+                class="village-detail__content"
+                data-village-detail-content
+                hidden
+              >
+                <header class="village-detail__header">
+                  <span
+                    class="village-detail__icon"
+                    data-village-detail-icon
+                    aria-hidden="true"
+                  >
+                    🏡
+                  </span>
+                  <div class="village-detail__title">
+                    <h3 class="village-detail__name" data-village-detail-name>
+                      Village structure
+                    </h3>
+                    <p
+                      class="village-detail__subtitle"
+                      data-village-detail-subtitle
+                    ></p>
+                  </div>
+                </header>
+                <div class="village-detail__progress" aria-hidden="true">
+                  <div class="village-progress">
+                    <div
+                      class="village-progress__bar"
+                      data-village-progress-bar
+                      style="width: 0%"
+                    ></div>
+                  </div>
+                </div>
+                <dl class="village-detail__stats">
+                  <div class="village-detail__stat">
+                    <dt>Workers</dt>
+                    <dd data-village-detail-workers>0/0</dd>
+                  </div>
+                  <div class="village-detail__stat">
+                    <dt>Production</dt>
+                    <dd data-village-detail-production>—</dd>
+                  </div>
+                  <div class="village-detail__stat">
+                    <dt>Inventory</dt>
+                    <dd data-village-detail-storage>—</dd>
+                  </div>
+                </dl>
+                <div class="village-detail__io">
+                  <div>
+                    <h4>Inputs</h4>
+                    <ul
+                      class="village-detail__io-list"
+                      data-village-detail-inputs
+                    ></ul>
+                  </div>
+                  <div>
+                    <h4>Outputs</h4>
+                    <ul
+                      class="village-detail__io-list"
+                      data-village-detail-outputs
+                    ></ul>
+                  </div>
+                </div>
+                <div class="village-detail__actions">
+                  <button
+                    type="button"
+                    class="detail-button detail-button--primary"
+                    data-village-action="upgrade"
+                  >
+                    Upgrade
+                  </button>
+                  <button
+                    type="button"
+                    class="detail-button detail-button--danger"
+                    data-village-action="demolish"
+                  >
+                    Demolish
+                  </button>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
       </section>
     </section>
   </div>
