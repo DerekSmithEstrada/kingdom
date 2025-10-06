@@ -1293,7 +1293,7 @@
         sort: "efficiency",
         viewMode: "classic",
         stackedFilters: {
-          onlyActive: true,
+          onlyActive: false,
           minLevel: 0,
           requireInputsOk: false,
         },
