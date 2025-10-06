@@ -31,6 +31,16 @@
   const shouldForceReset =
     verifyModeEnabled || (searchParams ? parseFlag(searchParams.get("reset")) : false);
 
+  const stackedFlagFromQuery = searchParams
+    ? parseFlag(searchParams.get("stacked"))
+    : false;
+
+  const featureFlags = {
+    UI_STACKED_VIEW: stackedFlagFromQuery,
+  };
+
+  const stackedWarnings = new Set();
+
   const verifyState = (() => {
     const base = {
       enabled: Boolean(verifyModeEnabled),
@@ -87,6 +97,40 @@
       return JSON.stringify(detail);
     } catch (error) {
       return String(detail);
+    }
+  }
+
+  function escapeHtml(value) {
+    if (value === null || value === undefined) {
+      return "";
+    }
+    return String(value).replace(/[&<>"']/g, (match) => {
+      switch (match) {
+        case "&":
+          return "&amp;";
+        case "<":
+          return "&lt;";
+        case ">":
+          return "&gt;";
+        case '"':
+          return "&quot;";
+        default:
+          return "&#39;";
+      }
+    });
+  }
+
+  function warnStack(key, detail) {
+    if (!featureFlags.UI_STACKED_VIEW) {
+      return;
+    }
+    const token = `${key}:${detail || ""}`;
+    if (stackedWarnings.has(token)) {
+      return;
+    }
+    stackedWarnings.add(token);
+    if (typeof console !== "undefined" && typeof console.warn === "function") {
+      console.warn("[Idle Village][Stacked]", key, detail);
     }
   }
 
@@ -611,6 +655,17 @@
     const next = { ...base, ...snapshot };
     const buildingUi = snapshot.buildings || {};
     next.buildings = { ...base.buildings, ...buildingUi };
+    const stackedFilters = buildingUi.stackedFilters || next.buildings.stackedFilters || {};
+    const minLevelValue = Number(stackedFilters.minLevel);
+    next.buildings.stackedFilters = {
+      onlyActive: Boolean(stackedFilters.onlyActive),
+      minLevel: Number.isFinite(minLevelValue)
+        ? Math.max(0, Math.min(10, Math.floor(minLevelValue)))
+        : 0,
+      requireInputsOk: Boolean(stackedFilters.requireInputsOk),
+    };
+    next.buildings.viewMode =
+      next.buildings.viewMode === "stacked" ? "stacked" : "classic";
     const filters = buildingUi.filters || {};
     next.buildings.filters = {
       ...base.buildings.filters,
@@ -1236,6 +1291,12 @@
       buildings: {
         density: "compact",
         sort: "efficiency",
+        viewMode: "classic",
+        stackedFilters: {
+          onlyActive: true,
+          minLevel: 0,
+          requireInputsOk: false,
+        },
         filters: {
           category: "all",
           level: null,
@@ -1291,6 +1352,11 @@
     if (!ui.buildings) {
       ui.buildings = clone(defaultUiState.buildings);
     }
+    if (!ui.buildings.stackedFilters) {
+      ui.buildings.stackedFilters = clone(
+        defaultUiState.buildings.stackedFilters
+      );
+    }
     return ui.buildings;
   }
 
@@ -1340,9 +1406,18 @@
   const densityToggle = document.getElementById("building-density-toggle");
   const sortSelect = document.getElementById("building-sort");
   const obsoleteToggle = document.getElementById("building-obsolete-toggle");
+  const stackedRoot = document.getElementById("buildings-stacked");
+  const stackedControls = document.getElementById("stacked-controls");
+  const stackedFilterActive = document.getElementById("stacked-filter-active");
+  const stackedFilterLevel = document.getElementById("stacked-filter-level");
+  const stackedFilterInputs = document.getElementById("stacked-filter-inputs");
+  const stackedHeaderControls = document.getElementById("stacked-header-controls");
+  const stackedFlagCheckbox = document.getElementById("stacked-flag-checkbox");
+  const stackedViewToggle = document.getElementById("stacked-view-toggle");
 
   const buildingElementMap = new Map();
   const pendingWorkerRequests = new Set();
+  const stackedWorkerMemory = new Map();
   const JOB_BUILDING_MAP = {
     forester: "woodcutter_camp",
     stick_gatherer: "stick_gathering_tent",
@@ -1357,6 +1432,8 @@
   const jobsCountLabel = document.getElementById("jobs-count");
   const seasonLabel = document.getElementById("season-label");
   const seasonFill = document.getElementById("season-fill");
+
+  function isStackedFeatureEnabled(){return Boolean(featureFlags.UI_STACKED_VIEW);}  function getStackedFilters(){const ui=getBuildingUiState();if(!ui.stackedFilters){ui.stackedFilters=clone(defaultUiState.buildings.stackedFilters);}return ui.stackedFilters;}  function updateStackedUi(show,mode,filters){if(buildingFiltersRoot)buildingFiltersRoot.hidden=show;if(buildingGrid)buildingGrid.hidden=show;if(stackedRoot)stackedRoot.hidden=!show;if(stackedControls){stackedControls.hidden=!show;if(show){if(stackedFilterActive)stackedFilterActive.checked=!!filters.onlyActive;if(stackedFilterLevel)stackedFilterLevel.value=String(filters.minLevel||0);if(stackedFilterInputs)stackedFilterInputs.checked=!!filters.requireInputsOk;}}const available=isStackedFeatureEnabled();if(stackedHeaderControls)stackedHeaderControls.hidden=!available;if(stackedFlagCheckbox)stackedFlagCheckbox.checked=available;if(stackedViewToggle){stackedViewToggle.hidden=!available;stackedViewToggle.querySelectorAll("[data-stacked-view]").forEach((button)=>{const active=(button.dataset.stackedView==="stacked"?"stacked":"classic")===mode;button.classList.toggle("is-active",active);button.setAttribute("aria-pressed",active?"true":"false");});}}  function formatStackedRate(value){const numeric=Number(value);if(!Number.isFinite(numeric)||Math.abs(numeric)<1e-6)return"0";if(Math.abs(numeric)>=10)return numberFormatter.format(Math.round(numeric));if(Math.abs(numeric)>=1)return numberFormatter.format(Math.round(numeric*10)/10);return numberFormatter.format(Math.round(numeric*100)/100);}  function computeStackedSummaries(buildings){const map=new Map();buildings.forEach((building)=>{if(!building)return;const key=String(building.type||building.id||"").toLowerCase();(map.get(key)||map.set(key,[]).get(key)).push(building);});const summaries=[];map.forEach((list,key)=>{const first=list[0]||{};const levelCounts={};const summary={id:String(first.id||key||""),label:(typeof first.build_label==="string"&&first.build_label)||(typeof first.name==="string"&&first.name)||formatResourceKey(key||"building"),icon:first.icon||"🏗️",built:0,workers:0,maxLevel:0,status:"good",active:false,production:{},missing:false};for(const building of list){const built=Math.max(0,Math.floor(Number(building.built)||0));summary.built+=built;const level=Math.max(1,Math.floor(Number(building.level)||1));if(built){levelCounts[level]=(levelCounts[level]||0)+built;if(level>summary.maxLevel)summary.maxLevel=level;}const workers=getBuildingAssignedWorkers(building);summary.workers+=workers;if(workers>0&&building.enabled!==false)summary.active=true;const totalMultiplier=(()=>{const value=building&&building.modifiers_applied&&Number(building.modifiers_applied.total_multiplier);return Number.isFinite(value)&&value>0?value:1;})();const maxWorkers=[building&&building.max_workers,building&&building.maxWorkers,building&&building.capacityPerBuilding].reduce((acc,value)=>{const numeric=Number(value);return Number.isFinite(numeric)&&numeric>acc?numeric:acc;},0);const workerRatio=maxWorkers>0?Math.min(1,workers/maxWorkers):workers>0?1:0;const effective=Math.max(0,Number(building.effective_rate)||0);const inputFactor=workerRatio>0&&totalMultiplier>0?Math.min(1,Math.max(0,effective/(workerRatio*totalMultiplier))):Math.min(1,Math.max(0,effective));let hasOutputs=false;Object.entries(computePerWorkerOutputs(building)).forEach(([resource,rate])=>{const numeric=Number(rate);if(!Number.isFinite(numeric)||numeric===0)return;const total=numeric*workers*totalMultiplier*inputFactor*60;if(!Number.isFinite(total)||total===0)return;summary.production[resource]=(summary.production[resource]||0)+total;hasOutputs=true;});if(!hasOutputs){const outputs=building.outputs||{};const cycle=Number(building.cycle_time)||Number(building.cycle_time_sec);if(cycle>0){Object.entries(outputs).forEach(([resource,amount])=>{const numeric=Number(amount);if(!Number.isFinite(numeric)||numeric===0)return;const total=numeric*effective*(60/cycle);summary.production[resource]=(summary.production[resource]||0)+total;});hasOutputs=Object.keys(outputs).length>0;}}if(!hasOutputs)summary.missing=true;const report=building.last_report||{};const reason=(typeof report.reason==="string"&&report.reason)||(typeof building.reason==="string"&&building.reason)||"";const bad=reason==="missing_input"||reason==="missing_maintenance";const warn=!bad&&(report.status==="warning"||report.status==="stalled"||(reason&&! ["inactive","no_workers","disabled"].includes(reason))||building.enabled===false||(building.can_produce===false&&workers>0));if(bad)summary.status="bad";else if(warn&&summary.status!=="bad")summary.status="warn";}summary.levels=Object.entries(levelCounts).map(([level,count])=>[Number(level),count]).sort((a,b)=>a[0]-b[0]);if(summary.missing)warnStack("missing-rate",summary.id);summaries.push(summary);});return summaries;}  function renderStackedBuildingsList(buildings,filters){if(!stackedRoot)return;const statusClass={good:"stacked-card__status stacked-card__status--good",warn:"stacked-card__status stacked-card__status--warn",bad:"stacked-card__status stacked-card__status--bad"};const statusLabel={good:"Inputs OK",warn:"Atención",bad:"Inputs críticos"};const formatProduction=(summary)=>{const entries=Object.entries(summary.production);if(!entries.length)return summary.missing?"Producción total: sin datos":"Producción total: —";entries.sort((a,b)=>Number(b[1])-Number(a[1]));return`Producción total: ${entries.slice(0,3).map(([resource,amount])=>`${formatResourceKey(resource)} ${formatStackedRate(amount)}/min`).join(" · ")}`;};const summaries=computeStackedSummaries(buildings).filter((summary)=>{if(filters.onlyActive&&!summary.active)return false;if(filters.minLevel>0&&summary.maxLevel<filters.minLevel)return false;if(filters.requireInputsOk&&summary.status!=="good")return false;return true;}).sort((a,b)=>a.label.localeCompare(b.label));const html=summaries.map((summary)=>{const levelText=summary.levels.length?summary.levels.map(([level,count])=>`<span>L${level}×${count}</span>`).join(""):"<span>Sin instancias</span>";const buildingId=escapeHtml(summary.id);const toggleLabel=summary.workers>0?"Apagar":"Activar";return`<article class="stacked-card" role="listitem" data-building-id="${buildingId}"><header class="stacked-card__header"><div class="stacked-card__title"><span class="stacked-card__icon">${escapeHtml(summary.icon)}</span><span>${escapeHtml(summary.label)}</span></div><div class="${statusClass[summary.status]}"><span class="stacked-card__status-indicator"></span><span>${statusLabel[summary.status]}</span></div></header><div class="stacked-card__meta"><span>Instancias: ${numberFormatter.format(summary.built)}</span><span>Trabajadores: ${numberFormatter.format(summary.workers)}</span></div><div class="stacked-card__levels">${levelText}</div><div class="stacked-card__production">${escapeHtml(formatProduction(summary))}</div><div class="stacked-card__actions"><button type="button" class="stacked-card__button" data-action="build" data-building-id="${buildingId}">Construir +1</button><button type="button" class="stacked-card__button" data-action="stack-upgrade" data-building-id="${buildingId}">Mejorar</button><button type="button" class="stacked-card__button" data-action="stack-toggle-power" data-building-id="${buildingId}">${toggleLabel}</button><button type="button" class="stacked-card__button" data-action="demolish" data-building-id="${buildingId}">Demoler</button></div></article>`;}).join("");stackedRoot.innerHTML=html||'<p class="placeholder-text">Sin edificios para mostrar.</p>'; }  async function toggleStackedPower(buildingId){const building=findBuildingById(buildingId);if(!building){warnStack("missing-building",buildingId);return;}const workers=getBuildingAssignedWorkers(building);if(workers>0){stackedWorkerMemory.set(String(buildingId),workers);await assignBuildingWorkers(buildingId,0);}else{const target=stackedWorkerMemory.get(String(buildingId))||1;await assignBuildingWorkers(buildingId,target);}}  function upgradeStackedBuilding(buildingId){const entry=buildingElementMap.get(resolveBuildingElementKey(buildingId));if(!entry||!entry.root){warnStack("upgrade-missing",buildingId);return;}const button=entry.root.querySelector('button[data-action="upgrade"]');if(button)button.click();else warnStack("upgrade-missing",buildingId);}  function handleStackedFlagChange(event){featureFlags.UI_STACKED_VIEW=Boolean(event&&event.target&&event.target.checked);const ui=getBuildingUiState();if(!isStackedFeatureEnabled()&&ui.viewMode==="stacked")ui.viewMode="classic";saveState();renderBuildings();}  function handleStackedViewClick(event){const button=event.target.closest("[data-stacked-view]");if(!button)return;const mode=button.dataset.stackedView==="stacked"?"stacked":"classic";const ui=getBuildingUiState();if(ui.viewMode!==mode){ui.viewMode=mode;saveState();renderBuildings();}}  function handleStackedFilterChange(event){const target=event.target;if(!target)return;const filters=getStackedFilters();if(target===stackedFilterActive)filters.onlyActive=Boolean(target.checked);else if(target===stackedFilterLevel){const value=Number(target.value);filters.minLevel=Number.isFinite(value)?Math.max(0,Math.min(10,Math.floor(value))):0;}else if(target===stackedFilterInputs)filters.requireInputsOk=Boolean(target.checked);else return;saveState();renderBuildings();}  function handleStackedAction(event){const button=event.target.closest("button[data-action]");if(!button||!stackedRoot||!stackedRoot.contains(button))return;const {action,buildingId}=button.dataset;if(!buildingId)return;if(action==="stack-toggle-power"){event.preventDefault();void toggleStackedPower(buildingId);return;}if(action==="stack-upgrade"){event.preventDefault();upgradeStackedBuilding(buildingId);return;}handleBuildingActions(event);}
 
   const VIEW_KEYS = [
     "inventory",
@@ -3097,9 +3174,23 @@
       .filter(Boolean);
 
     ensureUiState();
-    renderFilterControls();
-
     const ui = getBuildingUiState();
+    const stackedFilters = getStackedFilters();
+    const viewMode = ui.viewMode === "stacked" ? "stacked" : "classic";
+    const showStacked = isStackedFeatureEnabled() && viewMode === "stacked";
+
+    renderFilterControls();
+    updateStackedUi(showStacked, viewMode, stackedFilters);
+
+    if (showStacked) {
+      renderStackedBuildingsList(state.buildings, stackedFilters);
+      return;
+    }
+
+    if (stackedRoot) {
+      stackedRoot.innerHTML = "";
+    }
+
     const favorites = getFavoritesSet();
     const allBuildings = state.buildings;
 
@@ -5186,6 +5277,19 @@
   }
   if (sortSelect) {
     sortSelect.addEventListener("change", handleSortChange);
+  }
+  if (stackedRoot) {
+    stackedRoot.addEventListener("click", handleStackedAction);
+  }
+  if (stackedControls) {
+    stackedControls.addEventListener("change", handleStackedFilterChange);
+    stackedControls.addEventListener("input", handleStackedFilterChange);
+  }
+  if (stackedViewToggle) {
+    stackedViewToggle.addEventListener("click", handleStackedViewClick);
+  }
+  if (stackedFlagCheckbox) {
+    stackedFlagCheckbox.addEventListener("change", handleStackedFlagChange);
   }
   jobsList.addEventListener("click", handleJobActions);
   jobsList.addEventListener("change", handleJobInput);
