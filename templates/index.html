@@ -208,6 +208,13 @@
             <button type="button" class="density-toggle__button is-active" data-density="compact">Compact</button>
             <button type="button" class="density-toggle__button" data-density="detailed">Detailed</button>
           </div>
+          <div id="stacked-header-controls" class="stacked-header" hidden>
+            <label class="stacked-header__flag"><input type="checkbox" id="stacked-flag-checkbox" />Vista apilada</label>
+            <div id="stacked-view-toggle" class="stacked-header__modes" hidden role="group" aria-label="Alternar vista">
+              <button type="button" data-stacked-view="classic" class="is-active" aria-pressed="true">Vista clásica</button>
+              <button type="button" data-stacked-view="stacked" aria-pressed="false">Vista apilada</button>
+            </div>
+          </div>
         </div>
         <div class="building-toolbar" id="building-filters">
           <div class="building-toolbar__filters">
@@ -238,6 +245,12 @@
             </select>
           </div>
         </div>
+        <div id="stacked-controls" class="stacked-controls" hidden>
+          <label><input type="checkbox" id="stacked-filter-active" checked />Solo activos</label>
+          <label>Nivel mínimo <input type="number" id="stacked-filter-level" min="0" max="10" value="0" /></label>
+          <label><input type="checkbox" id="stacked-filter-inputs" />Inputs OK</label>
+        </div>
+        <div id="buildings-stacked" class="stacked-grid" hidden role="list"></div>
         <div class="building-grid" id="buildings-grid" role="list"></div>
       </section>
     </section>
