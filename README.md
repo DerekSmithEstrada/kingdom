@@ -65,17 +65,6 @@ python tests/test_backend.py
 - Ejecuta `pytest -q` para correr la verificación E2E de la API que valida el arranque limpio y la primera producción de madera.
 - Abre `http://127.0.0.1:5000/?verify=1` con la caché del navegador limpia para activar el modo de verificación visual: se mostrará un overlay con los checks y los detalles quedarán registrados en `window.__verifyLog`.
 
-### Árbol de producción
-
-- Nuevo endpoint `GET /api/production_tree` que devuelve nodos, aristas y metadatos del grafo de producción. Acepta los parámetros `only_discovered` (default `true`) y `only_active` (default `false`) para filtrar la respuesta.
-- Ejemplo rápido:
-
-  ```bash
-  curl "http://127.0.0.1:5000/api/production_tree?only_discovered=true&only_active=false"
-  ```
-
-- La pestaña **Production tree** del frontend consulta este endpoint y ofrece filtros de descubrimiento, actividad, categorías y búsqueda. Está disponible por defecto y escucha los mismos parámetros para reconsultar el backend cuando cambia un filtro.
-
 ### Integración con futuras rutas HTTP
 
 - Importa las funciones necesarias desde `api.ui_bridge` dentro de las nuevas rutas Flask para reutilizar la simulación existente.
