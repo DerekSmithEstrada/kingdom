@@ -7983,6 +7983,26 @@ function handleVillageDragEnd(event) {
     villageDetail.addEventListener("click", handleVillageDetailClick);
   }
 
+  function setupProductionTree() {
+    const view = document.querySelector('[data-view-panel="production"]');
+    const panel = document.getElementById("production-tree-panel");
+    if (!view || !panel) return;
+    const q = (selector) => panel.querySelector(selector);
+    const [content, status, categoriesRoot, searchInput, discoveredToggle, activeToggle] = ["[data-production-tree-content]","[data-production-tree-status]","[data-production-tree-categories]","[data-production-tree-search]","[data-production-tree-toggle="discovered"]","[data-production-tree-toggle="active"]"].map(q);
+    const state = { data: null, filters: { discovered: true, active: false }, categories: new Set(), search: "" };
+    const formatName = (id) => String(id || "").replace(/_/g, " ");
+    const setStatus = (msg) => { if (!status) return; status.hidden = !msg; status.textContent = msg || ""; };
+    const updateCategories = (nodes) => { if (!categoriesRoot) return; const categories = Array.from(new Set(nodes.filter((node) => node.type === "resource" && node.category).map((node) => node.category))).sort(); categoriesRoot.innerHTML = categories.map((category) => `<label class="production-tree-category"><input type="checkbox" value="${category}" ${state.categories.has(category) ? "checked" : ""}>${formatName(category)}</label>`).join(""); };
+    const render = () => { if (!state.data || !content) return; const nodes = new Map(state.data.nodes.map((node) => [node.id, node])); const raw = new Set(state.data.nodes.filter((node) => node.type === "resource").map((node) => node.id)); state.data.edges.forEach((edge) => raw.delete(edge.to)); const search = state.search.trim().toLowerCase(); const filtered = state.data.edges.filter((edge) => { const input = nodes.get(edge.from); const output = nodes.get(edge.to); const building = nodes.get(edge.via_building); if (!input || !output || !building) return false; if (state.categories.size && !state.categories.has(input.category) && !state.categories.has(output.category)) return false; if (!search) return true; return [input, output, building].flatMap((node) => [node.id, formatName(node.id)]).join(" ").toLowerCase().includes(search); }); if (!filtered.length) { setStatus(!state.data.edges.length ? "No hay recetas definidas en la configuración." : state.filters.active ? "No hay cadenas activas. Construí o asigná trabajadores para ver producción." : "No hay resultados para los filtros aplicados."); content.innerHTML = ""; return; } setStatus(""); const resourceChip = (node) => `<button type="button" class="production-tree-chip" data-production-resource="${node.id}">${formatName(node.id)} (${Number(node.stock || 0).toFixed(1)})${raw.has(node.id) ? ' <span class="production-tree-chip__badge">RAW</span>' : ""}</button>`; const buildingChip = (node) => `<button type="button" class="production-tree-chip production-tree-chip--building" data-production-building="${node.id}"${node.rate_per_sec ? ` title="${(Number(node.rate_per_sec) * 60).toFixed(2)}/min"` : ""}>${formatName(node.id)}</button>`; content.innerHTML = filtered.map((edge) => { const inputNode = nodes.get(edge.from); const outputNode = nodes.get(edge.to); const buildingNode = nodes.get(edge.via_building); const tooltip = edge.ratio ? ` title="Ratio ${edge.ratio}"` : ""; return `<div class="production-tree-row"${tooltip}>${resourceChip(inputNode)} → ${buildingChip(buildingNode)} → ${resourceChip(outputNode)}</div>`; }).join(""); };
+    const fetchData = async () => { setStatus("Cargando producción..."); const params = new URLSearchParams({ only_discovered: state.filters.discovered ? "true" : "false", only_active: state.filters.active ? "true" : "false" }); try { const response = await fetch(`/api/production_tree?${params.toString()}`, { cache: "no-store" }); if (!response.ok) throw new Error(`status ${response.status}`); state.data = await response.json(); updateCategories(state.data.nodes || []); render(); } catch (error) { setStatus("No se pudo cargar la producción."); if (typeof console !== "undefined" && typeof console.error === "function") console.error("[Idle Village] production tree fetch failed", error); } };
+    const ensureData = () => { if (state.data) render(); else void fetchData(); };
+    panel.addEventListener("click", (event) => { const resourceTarget = event.target.closest("[data-production-resource]"); if (resourceTarget) { activateResourceFilter(resourceTarget.dataset.productionResource); setActiveView("buildings"); return; } const buildingTarget = event.target.closest("[data-production-building]"); if (buildingTarget) { const buildingId = buildingTarget.dataset.productionBuilding; if (buildingId) { setActiveView("buildings"); window.requestAnimationFrame(() => { const key = resolveBuildingElementKey(buildingId); const entry = buildingElementMap.get(key); if (!entry || !entry.article) return; if (typeof entry.article.scrollIntoView === "function") entry.article.scrollIntoView({ behavior: "smooth", block: "center" }); entry.article.classList.add("building-card--highlighted"); window.setTimeout(() => entry.article.classList.remove("building-card--highlighted"), 1500); }); } } });
+    if (categoriesRoot) categoriesRoot.addEventListener("change", (event) => { const input = event.target; if (!input || input.type !== "checkbox") return; if (input.checked) state.categories.add(input.value); else state.categories.delete(input.value); render(); });
+    if (searchInput) searchInput.addEventListener("input", () => { state.search = searchInput.value || ""; render(); });
+    [[discoveredToggle, "discovered"], [activeToggle, "active"]].forEach(([input, key]) => { if (!input) return; input.addEventListener("change", () => { state.filters[key] = input.checked; state.data = null; void fetchData(); }); });
+    const observer = new MutationObserver(() => { if (!view.hasAttribute("hidden")) ensureData(); });
+    observer.observe(view, { attributes: true, attributeFilter: ["hidden", "class"] });
+  }
   if (typeof window !== "undefined") {
     window.addEventListener("scroll", handleGlobalScroll, { passive: true });
     window.addEventListener("resize", handleGlobalScroll);
@@ -7990,6 +8010,7 @@ function handleVillageDragEnd(event) {
   tradeList.addEventListener("click", handleTradeActions);
   tradeList.addEventListener("input", handleTradeInputs);
 
+  setupProductionTree();
   renderBuildings();
   ensureJobsForAllBuildings();
   renderJobs();
