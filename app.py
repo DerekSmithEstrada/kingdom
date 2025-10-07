@@ -188,5 +188,51 @@ def api_change_workers(building_id: str):
     return jsonify(response), status
 
 
+@app.get("/api/village")
+def api_village_snapshot():
+    response = ui_bridge.get_village_design_state()
+    status = 200 if response.get("ok", False) else int(response.get("http_status", 400))
+    return jsonify(response), status
+
+
+@app.post("/api/village/build")
+def api_village_build():
+    payload = request.get_json(silent=True) or {}
+    x = payload.get("x")
+    y = payload.get("y")
+    building_type = payload.get("building")
+    response = ui_bridge.build_village_tile(x, y, building_type)
+    status = 200 if response.get("ok", False) else int(response.get("http_status", 400))
+    return jsonify(response), status
+
+
+@app.post("/api/village/demolish")
+def api_village_demolish():
+    payload = request.get_json(silent=True) or {}
+    x = payload.get("x")
+    y = payload.get("y")
+    response = ui_bridge.demolish_village_tile(x, y)
+    status = 200 if response.get("ok", False) else int(response.get("http_status", 400))
+    return jsonify(response), status
+
+
+@app.post("/api/village/save")
+def api_village_save():
+    payload = request.get_json(silent=True) or {}
+    path = payload.get("path")
+    response = ui_bridge.save_village_design(path)
+    status = 200 if response.get("ok", False) else int(response.get("http_status", 400))
+    return jsonify(response), status
+
+
+@app.post("/api/village/load")
+def api_village_load():
+    payload = request.get_json(silent=True) or {}
+    path = payload.get("path")
+    response = ui_bridge.load_village_design(path)
+    status = 200 if response.get("ok", False) else int(response.get("http_status", 400))
+    return jsonify(response), status
+
+
 if __name__ == "__main__":
     app.run(debug=True)

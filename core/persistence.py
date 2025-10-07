@@ -40,6 +40,7 @@ def save_game(path: str) -> None:
             "wood_production_per_second": game_state.wood_production_per_second,
             "max_workers_woodcutter": game_state.max_workers_woodcutter,
         },
+        "village_design": game_state.village_design.export_state(),
     }
     with open(Path(path), "w", encoding="utf-8") as fh:
         json.dump(data, fh, ensure_ascii=False, indent=2)
@@ -120,3 +121,9 @@ def load_game(path: str) -> None:
     trade_data = data.get("trade", {})
     game_state.trade_manager.bulk_load(trade_data)
     game_state.recompute_wood_caps()
+
+    village_data = data.get("village_design")
+    if isinstance(village_data, dict):
+        game_state.village_design.load_state(village_data)
+        effects = game_state.village_design.recompute_effects()
+        game_state._apply_village_effects(effects)
