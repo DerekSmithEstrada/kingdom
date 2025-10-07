@@ -9,6 +9,7 @@ from core.game_state import (
     NothingToDemolishError,
     get_game_state,
 )
+from core.village_design import VillagePlacementError
 from core.jobs import WorkerAllocationError
 from core.persistence import load_game as core_load_game, save_game as core_save_game
 from core.resources import Resource
@@ -328,6 +329,94 @@ def set_trade_rate(resource_key: str, rate: float) -> Dict[str, object]:
         return {"ok": True}
     except (ValueError, KeyError) as exc:
         return {"ok": False, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Village design bridge
+
+
+def get_village_design_state() -> Dict[str, object]:
+    state = get_game_state()
+    snapshot = state.snapshot_village_design()
+    metadata = state.response_metadata(snapshot.get("version"))
+    payload = {"village": snapshot}
+    payload.update(metadata)
+    return _success_response(**payload)
+
+
+def build_village_tile(x: int, y: int, building_type: str) -> Dict[str, object]:
+    state = get_game_state()
+    try:
+        snapshot = state.build_village_structure(x, y, building_type)
+    except InsufficientResourcesError as exc:
+        requirements = {
+            resource.value.lower(): float(amount)
+            for resource, amount in exc.requirements.items()
+        }
+        error = _error_response(
+            "insufficient_resources",
+            "Recursos insuficientes",
+            http_status=400,
+        )
+        error["requires"] = requirements
+        error.update(state.response_metadata())
+        return error
+    except VillagePlacementError as exc:
+        error = _error_response("invalid_placement", str(exc), http_status=400)
+        error.update(state.response_metadata())
+        return error
+    metadata = state.response_metadata(snapshot.get("version"))
+    payload = {"village": snapshot}
+    payload.update(metadata)
+    return _success_response(**payload)
+
+
+def demolish_village_tile(x: int, y: int) -> Dict[str, object]:
+    state = get_game_state()
+    try:
+        snapshot = state.demolish_village_structure(x, y)
+    except VillagePlacementError as exc:
+        error = _error_response("invalid_demolish", str(exc), http_status=400)
+        error.update(state.response_metadata())
+        return error
+    metadata = state.response_metadata(snapshot.get("version"))
+    payload = {"village": snapshot}
+    payload.update(metadata)
+    return _success_response(**payload)
+
+
+def save_village_design(path: str | None = None) -> Dict[str, object]:
+    state = get_game_state()
+    try:
+        target = state.save_village_design(path)
+    except Exception as exc:  # pragma: no cover - UI feedback only
+        error = _error_response("village_save_failed", str(exc), http_status=500)
+        error.update(state.response_metadata())
+        return error
+    metadata = state.response_metadata()
+    return _success_response(path=target, message="Village design saved", **metadata)
+
+
+def load_village_design(path: str | None = None) -> Dict[str, object]:
+    state = get_game_state()
+    try:
+        snapshot = state.load_village_design(path)
+    except FileNotFoundError:
+        error = _error_response("village_save_missing", "No saved design found", http_status=404)
+        error.update(state.response_metadata())
+        return error
+    except VillagePlacementError as exc:
+        error = _error_response("village_load_failed", str(exc), http_status=400)
+        error.update(state.response_metadata())
+        return error
+    except Exception as exc:  # pragma: no cover - UI feedback
+        error = _error_response("village_load_failed", str(exc), http_status=400)
+        error.update(state.response_metadata())
+        return error
+    metadata = state.response_metadata(snapshot.get("version"))
+    payload = {"village": snapshot, "message": "Village design loaded"}
+    payload.update(metadata)
+    return _success_response(**payload)
 
 
 # ---------------------------------------------------------------------------

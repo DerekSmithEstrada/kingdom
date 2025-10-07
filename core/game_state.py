@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from collections import deque
 import threading
+from pathlib import Path
 from typing import Deque, Dict, List, Mapping, Optional, Set, Tuple
 
 from . import config
@@ -14,6 +15,12 @@ from .buildings import Building, build_from_config
 from .inventory import Inventory
 from .jobs import WorkerPool
 from .resources import ALL_RESOURCES, Resource
+from .village_design import (
+    BUILDING_DEFINITIONS,
+    DEFAULT_SAVE_PATH as VILLAGE_DEFAULT_SAVE,
+    VillageDesignState,
+    VillagePlacementError,
+)
 from .seasons import SEASON_GRANTS
 from .timeclock import SeasonClock
 from .trade import TradeManager
@@ -81,7 +88,8 @@ class GameState:
             season_name = self.season_clock.get_current_season().lower()
             self.season = {"current": season_name, "last_change_at": float(now)}
 
-            self.population_capacity = int(config.POPULATION_CAPACITY)
+            self._base_population_capacity = int(config.POPULATION_CAPACITY)
+            self.population_capacity = int(self._base_population_capacity)
             self.population = {
                 "total": 0,
                 "cap": self.population_capacity,
@@ -97,6 +105,7 @@ class GameState:
             self.buildings: Dict[str, Building] = {}
             Building.reset_ids()
             self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
+            self.village_design = VillageDesignState()
             self._initialise_inventory()
             self.resources["gold"] = self.inventory.get_amount(Resource.GOLD)
             self.last_production_reports = {}
@@ -111,6 +120,7 @@ class GameState:
             self.wood_max_capacity = 0.0
             self.wood_production_per_second = 0.0
             self.recompute_wood_caps()
+            self._apply_village_effects(self.village_design.recompute_effects())
             self._sync_season_state()
 
     # ------------------------------------------------------------------
@@ -206,6 +216,19 @@ class GameState:
             self.buildings[building.id] = building
             self.worker_pool.register_building(building)
             self.last_production_reports[building.id] = building.production_report
+
+    def _apply_village_effects(self, effects: Mapping[str, object] | None) -> None:
+        housing_bonus = 0
+        if isinstance(effects, Mapping):
+            try:
+                housing_bonus = int(float(effects.get("housing", 0)))
+            except (TypeError, ValueError):
+                housing_bonus = 0
+        with self._lock:
+            base = int(getattr(self, "_base_population_capacity", 0))
+            self.population_capacity = max(0, base + housing_bonus)
+            if isinstance(self.population, dict):
+                self.population["cap"] = self.population_capacity
 
     def add_notification(self, message: str) -> None:
         self.notifications.append(message)
@@ -978,6 +1001,102 @@ class GameState:
             resource.value: self.inventory.get_amount(resource)
             for resource in ALL_RESOURCES
         }
+
+    def snapshot_village_design(self) -> Dict[str, object]:
+        with self._lock:
+            snapshot = self.village_design.snapshot()
+            resources = {
+                "wood": self.inventory.get_amount(Resource.WOOD),
+                "stone": self.inventory.get_amount(Resource.STONE),
+                "food": self.inventory.get_amount(Resource.BREAD),
+                "gold": self.inventory.get_amount(Resource.GOLD),
+            }
+            population = self.population_snapshot()
+            version = int(self._state_version)
+        snapshot["resources"] = {key: float(value) for key, value in resources.items()}
+        snapshot["population"] = population
+        snapshot["version"] = version
+        snapshot["housing_base"] = int(getattr(self, "_base_population_capacity", 0))
+        return snapshot
+
+    def build_village_structure(self, x: int, y: int, building_type: str) -> Dict[str, object]:
+        try:
+            ix = int(x)
+            iy = int(y)
+        except (TypeError, ValueError):
+            raise VillagePlacementError("Invalid coordinates")
+        building_key = str(building_type)
+        if building_key not in BUILDING_DEFINITIONS:
+            raise VillagePlacementError("Unknown building type")
+
+        requirements = {
+            resource: float(amount)
+            for resource, amount in BUILDING_DEFINITIONS[building_key].cost.items()
+            if amount > 0
+        }
+
+        reservation = None
+        with self._lock:
+            if requirements:
+                reservation = self.inventory.reserve(requirements)
+                if reservation is None:
+                    raise InsufficientResourcesError(requirements)
+            try:
+                _, effects = self.village_design.place_building(ix, iy, building_key)
+            except Exception as exc:
+                if reservation is not None:
+                    self.inventory.rollback(reservation)
+                raise
+            if reservation is not None:
+                self.inventory.commit(reservation)
+            self._apply_village_effects(effects)
+            self._state_version += 1
+            self.resources["gold"] = self.inventory.get_amount(Resource.GOLD)
+        return self.snapshot_village_design()
+
+    def demolish_village_structure(self, x: int, y: int) -> Dict[str, object]:
+        try:
+            ix = int(x)
+            iy = int(y)
+        except (TypeError, ValueError):
+            raise VillagePlacementError("Invalid coordinates")
+
+        with self._lock:
+            building, effects = self.village_design.demolish_building(ix, iy)
+            definition = BUILDING_DEFINITIONS.get(building.type_id)
+            refund: Dict[Resource, float] = {}
+            if definition:
+                for resource, amount in definition.cost.items():
+                    if amount <= 0:
+                        continue
+                    refund[resource] = float(amount) * 0.5
+            if refund:
+                self.inventory.add(refund)
+            self._apply_village_effects(effects)
+            self._state_version += 1
+            self.resources["gold"] = self.inventory.get_amount(Resource.GOLD)
+        snapshot = self.snapshot_village_design()
+        if refund:
+            snapshot["refund"] = {
+                resource.value.lower(): round(amount, 2)
+                for resource, amount in refund.items()
+            }
+        return snapshot
+
+    def save_village_design(self, path: Optional[str] = None) -> str:
+        target = Path(path) if path else VILLAGE_DEFAULT_SAVE
+        with self._lock:
+            self.village_design.save_to_path(target)
+        return str(target)
+
+    def load_village_design(self, path: Optional[str] = None) -> Dict[str, object]:
+        target = Path(path) if path else VILLAGE_DEFAULT_SAVE
+        with self._lock:
+            self.village_design.load_from_path(target)
+            effects = self.village_design.recompute_effects()
+            self._apply_village_effects(effects)
+            self._state_version += 1
+        return self.snapshot_village_design()
 
     # ------------------------------------------------------------------
     def _sync_season_state(self) -> None:
