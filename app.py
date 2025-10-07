@@ -216,6 +216,16 @@ def api_village_demolish():
     return jsonify(response), status
 
 
+@app.post("/api/village/upgrade")
+def api_village_upgrade():
+    payload = request.get_json(silent=True) or {}
+    x = payload.get("x")
+    y = payload.get("y")
+    response = ui_bridge.upgrade_village_tile(x, y)
+    status = 200 if response.get("ok", False) else int(response.get("http_status", 400))
+    return jsonify(response), status
+
+
 @app.post("/api/village/save")
 def api_village_save():
     payload = request.get_json(silent=True) or {}

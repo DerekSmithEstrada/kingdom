@@ -385,6 +385,20 @@ def demolish_village_tile(x: int, y: int) -> Dict[str, object]:
     return _success_response(**payload)
 
 
+def upgrade_village_tile(x: int, y: int) -> Dict[str, object]:
+    state = get_game_state()
+    try:
+        snapshot = state.upgrade_village_structure(x, y)
+    except VillagePlacementError as exc:
+        error = _error_response("invalid_upgrade", str(exc), http_status=400)
+        error.update(state.response_metadata())
+        return error
+    metadata = state.response_metadata(snapshot.get("version"))
+    payload = {"village": snapshot}
+    payload.update(metadata)
+    return _success_response(**payload)
+
+
 def save_village_design(path: str | None = None) -> Dict[str, object]:
     state = get_game_state()
     try:
