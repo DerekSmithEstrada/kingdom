@@ -13,7 +13,6 @@ from core.village_design import VillagePlacementError
 from core.jobs import WorkerAllocationError
 from core.persistence import load_game as core_load_game, save_game as core_save_game
 from core.resources import Resource
-from core.production_tree import build_production_graph
 
 
 def _season_snapshot(state=None) -> Dict[str, object]:
@@ -123,16 +122,6 @@ def get_trade_snapshot() -> Dict[str, object]:
 
 def get_inventory_snapshot() -> Dict[str, object]:
     return get_game_state().inventory_snapshot()
-
-
-def get_production_tree(only_discovered: object = True) -> Dict[str, object]:
-    """Return the current production tree graph."""
-
-    state = get_game_state()
-    filter_discovered = _should_reset(only_discovered)
-    graph = build_production_graph(state, only_discovered=filter_discovered)
-    metadata = state.response_metadata(graph.get("meta", {}).get("version"))
-    return _success_response(graph=graph, **metadata)
 
 
 # ---------------------------------------------------------------------------
