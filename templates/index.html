@@ -312,11 +312,33 @@
       data-view-panel="production"
       hidden
     >
-      <section class="panel">
+      <section class="panel" id="production-tree-panel">
         <div class="panel-header">
           <h2 class="panel-title">Production tree</h2>
         </div>
-        <p class="placeholder-text">Production tree view coming soon.</p>
+        <div class="production-tree-controls" data-production-tree-controls>
+          <label class="control">
+            <input type="checkbox" data-production-tree-toggle="discovered" checked />
+            Solo descubiertos
+          </label>
+          <label class="control">
+            <input type="checkbox" data-production-tree-toggle="active" />
+            Solo activos
+          </label>
+          <label class="control production-tree-search">
+            <span class="sr-only">Buscar recurso o edificio</span>
+            <input
+              type="search"
+              placeholder="Buscar recurso o edificio"
+              data-production-tree-search
+            />
+          </label>
+        </div>
+        <div class="production-tree-categories" data-production-tree-categories></div>
+        <p class="production-tree-status" data-production-tree-status hidden>
+          Cargando producción...
+        </p>
+        <div class="production-tree-content" data-production-tree-content></div>
       </section>
     </section>
 

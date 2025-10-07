@@ -13,6 +13,7 @@ from core.village_design import VillagePlacementError
 from core.jobs import WorkerAllocationError
 from core.persistence import load_game as core_load_game, save_game as core_save_game
 from core.resources import Resource
+from core.production_tree import build_graph as build_production_tree_graph
 
 
 def _season_snapshot(state=None) -> Dict[str, object]:
@@ -50,6 +51,19 @@ def _should_reset(flag: object) -> bool:
     if isinstance(flag, str):
         return flag.strip().lower() not in {"0", "false", "no"}
     return bool(flag)
+
+
+def _parse_bool_flag(value: object, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off"}:
+            return False
+        return default
+    return bool(value)
 
 
 def _state_payload(state) -> Dict[str, object]:
@@ -122,6 +136,20 @@ def get_trade_snapshot() -> Dict[str, object]:
 
 def get_inventory_snapshot() -> Dict[str, object]:
     return get_game_state().inventory_snapshot()
+
+
+def get_production_tree(
+    only_discovered: object = True, only_active: object = False
+) -> Dict[str, object]:
+    state = get_game_state()
+    discovered_flag = _parse_bool_flag(only_discovered, True)
+    active_flag = _parse_bool_flag(only_active, False)
+    return build_production_tree_graph(
+        state,
+        config,
+        only_discovered=discovered_flag,
+        only_active=active_flag,
+    )
 
 
 # ---------------------------------------------------------------------------

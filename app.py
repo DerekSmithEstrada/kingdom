@@ -53,6 +53,19 @@ def api_state():
     return jsonify(response)
 
 
+@app.get("/api/production_tree")
+def api_production_tree():
+    """Expose the production tree graph for the current state."""
+
+    only_discovered = request.args.get("only_discovered", True)
+    only_active = request.args.get("only_active", False)
+    response = ui_bridge.get_production_tree(
+        only_discovered=only_discovered,
+        only_active=only_active,
+    )
+    return jsonify(response)
+
+
 @app.post("/api/tick")
 def api_tick():
     """Advance the simulation by ``dt`` seconds (defaults to 1)."""
