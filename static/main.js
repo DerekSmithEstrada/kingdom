@@ -37,6 +37,7 @@
 
   const featureFlags = {
     UI_STACKED_VIEW: stackedFlagFromQuery,
+    production_tree: { enabled: true },
   };
 
   const stackedWarnings = new Set();
@@ -713,6 +714,43 @@
       : [];
     next.population = normalisePopulation(snapshot.population || next.population);
     next.ui = normaliseUiState(snapshot.ui || snapshot.UI || snapshot.Ui);
+    next.productionTree = normaliseProductionTree(snapshot.productionTree || next.productionTree);
+    return next;
+  }
+
+  function normaliseProductionTree(snapshot) {
+    const defaults = clone(productionTreeDefaults);
+    const base = snapshot && typeof snapshot === 'object' ? snapshot : {};
+    const next = { ...defaults, ...base };
+    const filters = base.filters && typeof base.filters === 'object' ? base.filters : {};
+    next.filters = {
+      onlyDiscovered:
+        filters.onlyDiscovered === undefined
+          ? defaults.filters.onlyDiscovered
+          : Boolean(filters.onlyDiscovered),
+      onlyActive:
+        filters.onlyActive === undefined
+          ? defaults.filters.onlyActive
+          : Boolean(filters.onlyActive),
+      search: typeof filters.search === 'string' ? filters.search : '',
+      categories: Array.isArray(filters.categories) && filters.categories.length
+        ? filters.categories.map((category) => String(category))
+        : [...defaults.filters.categories],
+    };
+    if (!Array.isArray(next.nodes)) {
+      next.nodes = [];
+    }
+    if (!Array.isArray(next.edges)) {
+      next.edges = [];
+    }
+    if (!next.meta || typeof next.meta !== 'object') {
+      next.meta = null;
+    }
+    if (next.lastUpdatedAt !== null && next.lastUpdatedAt !== undefined) {
+      next.lastUpdatedAt = String(next.lastUpdatedAt);
+    } else {
+      next.lastUpdatedAt = null;
+    }
     return next;
   }
 
@@ -1311,6 +1349,18 @@
       },
       favorites: [],
     },
+    productionTree: {
+      filters: {
+        onlyDiscovered: true,
+        onlyActive: false,
+        search: "",
+        categories: ["food", "construction", "metal", "textiles", "luxury", "misc"],
+      },
+      nodes: [],
+      edges: [],
+      meta: null,
+      lastUpdatedAt: null,
+    },
   };
 
   function clone(value) {
@@ -1318,6 +1368,26 @@
   }
 
   const defaultUiState = clone(defaultState.ui);
+  const PRODUCTION_TREE_GROUPS = [
+    { id: "food", label: "Food" },
+    { id: "construction", label: "Construction" },
+    { id: "metal", label: "Metal" },
+    { id: "textiles", label: "Textiles" },
+    { id: "luxury", label: "Luxury" },
+    { id: "misc", label: "Misc" },
+  ];
+  const productionTreeDefaults = {
+    filters: {
+      onlyDiscovered: true,
+      onlyActive: false,
+      search: "",
+      categories: PRODUCTION_TREE_GROUPS.map((group) => group.id),
+    },
+    nodes: [],
+    edges: [],
+    meta: null,
+    lastUpdatedAt: null,
+  };
 
   function loadState() {
     const source = persistedSnapshot || defaultState;
@@ -3108,6 +3178,22 @@
     active: "inventory",
   };
 
+  const productionTreeElements = {
+    panel: document.querySelector('[data-production-tree-panel]'),
+    status: document.querySelector('[data-production-tree-status]'),
+    root: document.querySelector('[data-production-tree-root]'),
+    grid: document.querySelector('[data-production-tree-grid]'),
+    edges: document.querySelector('[data-production-tree-edges]'),
+    empty: document.querySelector('[data-production-tree-empty]'),
+    emptyDiscovered: document.querySelector('[data-production-tree-empty-discovered]'),
+    emptyConfig: document.querySelector('[data-production-tree-empty-config]'),
+    filterDiscovered: document.querySelector('[data-production-tree-filter="discovered"]'),
+    filterAll: document.querySelector('[data-production-tree-filter="all"]'),
+    activeToggle: document.querySelector('[data-production-tree-active]'),
+    search: document.querySelector('[data-production-tree-search]'),
+    categories: document.querySelector('[data-production-tree-categories]'),
+  };
+
   const jobsPanel = document.getElementById("jobs");
   let resourceFilterChip = null;
   let resourceFilterLabel = null;
@@ -3144,6 +3230,9 @@
       return;
     }
     viewState.active = viewKey;
+    if (viewKey === "production") {
+      ensureProductionTreeInitialised();
+    }
     viewTabs.forEach((tab) => {
       const isActive = tab.dataset.viewTab === viewKey;
       tab.classList.toggle("is-active", isActive);
@@ -6992,6 +7081,7 @@ function handleVillageDragEnd(event) {
 
     if (changed) {
       renderVillageHud();
+      scheduleProductionTreeRefresh();
     }
 
     return changed;
@@ -7150,6 +7240,7 @@ function handleVillageDragEnd(event) {
       updateJobsCount();
       saveState();
       logState();
+      scheduleProductionTreeRefresh({ immediate: true });
       return true;
     }
 
@@ -7162,6 +7253,7 @@ function handleVillageDragEnd(event) {
       updateChips();
       saveState();
       logState();
+      scheduleProductionTreeRefresh();
       return true;
     }
 
@@ -7217,6 +7309,7 @@ function handleVillageDragEnd(event) {
       } else {
         renderBuildings();
       }
+      scheduleProductionTreeRefresh();
     }
     return changed;
   }
@@ -7999,6 +8092,483 @@ function handleVillageDragEnd(event) {
   updateChips();
   renderSeason(state.season);
   updateVillageCompactToggle();
+
+  let productionTreeInitialised = false;
+  let productionTreeRefreshTimer = null;
+  let productionTreeSearchTimer = null;
+  let productionTreeLoading = false;
+  let productionTreeNeedsRefresh = true;
+
+  function ensureProductionTreeState() {
+    const tree = normaliseProductionTree(state.productionTree || {});
+    state.productionTree = tree;
+    return tree;
+  }
+
+  function setProductionTreeStatus(message, tone = "info") {
+    const target = productionTreeElements.status;
+    if (!target) {
+      return;
+    }
+    if (!message) {
+      target.textContent = "";
+      target.removeAttribute("data-state");
+      return;
+    }
+    target.textContent = message;
+    target.dataset.state = tone;
+  }
+
+  function updateProductionTreeFilterUI() {
+    const tree = ensureProductionTreeState();
+    const filters = tree.filters;
+    if (productionTreeElements.filterDiscovered) {
+      productionTreeElements.filterDiscovered.classList.toggle("is-active", Boolean(filters.onlyDiscovered));
+    }
+    if (productionTreeElements.filterAll) {
+      productionTreeElements.filterAll.classList.toggle("is-active", !filters.onlyDiscovered);
+    }
+    if (productionTreeElements.activeToggle) {
+      productionTreeElements.activeToggle.checked = Boolean(filters.onlyActive);
+    }
+    if (productionTreeElements.search) {
+      productionTreeElements.search.value = filters.search || "";
+    }
+    if (productionTreeElements.categories) {
+      const active = new Set(filters.categories);
+      productionTreeElements.categories.querySelectorAll('[data-category]').forEach((button) => {
+        const key = button.dataset.category;
+        const isActive = key ? active.has(key) : true;
+        button.classList.toggle("is-active", isActive);
+      });
+    }
+  }
+
+  function bindProductionTreeEvents() {
+    ensureProductionTreeState();
+    if (productionTreeElements.filterDiscovered && !productionTreeElements.filterDiscovered.dataset.bound) {
+      productionTreeElements.filterDiscovered.addEventListener("click", () => {
+        const current = ensureProductionTreeState();
+        if (!current.filters.onlyDiscovered) {
+          current.filters.onlyDiscovered = true;
+          scheduleProductionTreeRefresh({ immediate: true });
+          updateProductionTreeFilterUI();
+          saveState();
+        }
+      });
+      productionTreeElements.filterDiscovered.dataset.bound = "true";
+    }
+    if (productionTreeElements.filterAll && !productionTreeElements.filterAll.dataset.bound) {
+      productionTreeElements.filterAll.addEventListener("click", () => {
+        const current = ensureProductionTreeState();
+        if (current.filters.onlyDiscovered) {
+          current.filters.onlyDiscovered = false;
+          scheduleProductionTreeRefresh({ immediate: true });
+          updateProductionTreeFilterUI();
+          saveState();
+        }
+      });
+      productionTreeElements.filterAll.dataset.bound = "true";
+    }
+    if (productionTreeElements.activeToggle && !productionTreeElements.activeToggle.dataset.bound) {
+      productionTreeElements.activeToggle.addEventListener("change", () => {
+        const current = ensureProductionTreeState();
+        current.filters.onlyActive = Boolean(productionTreeElements.activeToggle.checked);
+        renderProductionTree();
+        saveState();
+      });
+      productionTreeElements.activeToggle.dataset.bound = "true";
+    }
+    if (productionTreeElements.search && !productionTreeElements.search.dataset.bound) {
+      productionTreeElements.search.addEventListener("input", () => {
+        const term = productionTreeElements.search.value || "";
+        const current = ensureProductionTreeState();
+        current.filters.search = term;
+        if (productionTreeSearchTimer) {
+          clearTimeout(productionTreeSearchTimer);
+        }
+        productionTreeSearchTimer = setTimeout(() => {
+          renderProductionTree();
+          saveState();
+        }, 120);
+      });
+      productionTreeElements.search.dataset.bound = "true";
+    }
+    if (productionTreeElements.categories) {
+      productionTreeElements.categories.querySelectorAll('[data-category]').forEach((button) => {
+        if (button.dataset.bound) {
+          return;
+        }
+        button.addEventListener("click", () => {
+          const key = button.dataset.category;
+          const current = ensureProductionTreeState();
+          const active = new Set(current.filters.categories);
+          if (key && active.has(key) && active.size > 1) {
+            active.delete(key);
+          } else if (key) {
+            active.add(key);
+          }
+          if (active.size === 0) {
+            PRODUCTION_TREE_GROUPS.forEach((group) => active.add(group.id));
+          }
+          current.filters.categories = Array.from(active);
+          updateProductionTreeFilterUI();
+          renderProductionTree();
+          saveState();
+        });
+        button.dataset.bound = "true";
+      });
+    }
+  }
+
+  function ensureProductionTreeInitialised() {
+    if (!featureFlags.production_tree?.enabled) {
+      return;
+    }
+    const elements = productionTreeElements;
+    if (!elements.panel) {
+      productionTreeInitialised = false;
+      return;
+    }
+    const tree = ensureProductionTreeState();
+    if (elements.categories && !elements.categories.dataset.initialised) {
+      elements.categories.innerHTML = "";
+      PRODUCTION_TREE_GROUPS.forEach((group) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "production-tree__category";
+        button.dataset.category = group.id;
+        button.textContent = group.label;
+        elements.categories.appendChild(button);
+      });
+      elements.categories.dataset.initialised = "true";
+    }
+    bindProductionTreeEvents();
+    updateProductionTreeFilterUI();
+    productionTreeInitialised = true;
+    if (productionTreeNeedsRefresh || !tree.nodes.length) {
+      scheduleProductionTreeRefresh({ immediate: true });
+    } else {
+      renderProductionTree();
+    }
+  }
+
+  function scheduleProductionTreeRefresh(options = {}) {
+    if (!featureFlags.production_tree?.enabled) {
+      return;
+    }
+    const { immediate = false } = options;
+    productionTreeNeedsRefresh = true;
+    if (immediate) {
+      refreshProductionTree();
+      return;
+    }
+    if (productionTreeRefreshTimer) {
+      return;
+    }
+    productionTreeRefreshTimer = setTimeout(() => {
+      productionTreeRefreshTimer = null;
+      refreshProductionTree();
+    }, 250);
+  }
+
+  function refreshProductionTree() {
+    if (!featureFlags.production_tree?.enabled) {
+      return;
+    }
+    const elements = productionTreeElements;
+    if (!elements.panel) {
+      productionTreeInitialised = false;
+      return;
+    }
+    const tree = ensureProductionTreeState();
+    productionTreeNeedsRefresh = false;
+    productionTreeLoading = true;
+    setProductionTreeStatus("Actualizando…");
+    const params = new URLSearchParams();
+    params.set("only_discovered", tree.filters.onlyDiscovered ? "true" : "false");
+    fetchJson(`/api/production_tree?${params.toString()}`)
+      .then((response) => {
+        productionTreeLoading = false;
+        if (!response || !response.ok || !response.graph) {
+          setProductionTreeStatus("No se pudo obtener el árbol", "error");
+          return;
+        }
+        const graph = response.graph;
+        const current = ensureProductionTreeState();
+        current.nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+        current.edges = Array.isArray(graph.edges) ? graph.edges : [];
+        current.meta = graph.meta && typeof graph.meta === "object" ? graph.meta : null;
+        current.lastUpdatedAt = graph.meta && graph.meta.updated_at ? graph.meta.updated_at : null;
+        renderProductionTree();
+        if (response.server_time) {
+          setProductionTreeStatus(`Actualizado ${response.server_time}`);
+        } else if (current.lastUpdatedAt) {
+          setProductionTreeStatus(`Actualizado ${current.lastUpdatedAt}`);
+        } else {
+          setProductionTreeStatus("Actualizado");
+        }
+      })
+      .catch(() => {
+        productionTreeLoading = false;
+        setProductionTreeStatus("No se pudo obtener el árbol", "error");
+      });
+  }
+
+  function createProductionTreeNode(node, edgesByNode) {
+    const element = document.createElement("article");
+    const type = String(node.type || "resource");
+    element.className = "production-tree__node";
+    element.classList.add(type === "building" ? "production-tree__node--building" : "production-tree__node--resource");
+    element.dataset.nodeId = node.id || "";
+    if (node.active) {
+      element.classList.add("is-active");
+    }
+    if (node.discovered === false) {
+      element.classList.add("is-locked");
+    }
+    const title = document.createElement("h3");
+    title.className = "production-tree__node-title";
+    title.textContent = node.label || node.name || formatResourceKey(node.id || "");
+    element.appendChild(title);
+
+    const meta = document.createElement("div");
+    meta.className = "production-tree__node-meta";
+    element.appendChild(meta);
+
+    if (type === "resource") {
+      const stockValue = document.createElement("span");
+      stockValue.className = "production-tree__node-metric";
+      stockValue.textContent = `${formatInventoryValue(node.stock || 0)} en almacén`;
+      meta.appendChild(stockValue);
+      const categoryLabel = document.createElement("span");
+      categoryLabel.textContent = formatResourceKey(node.category_group || "misc");
+      meta.appendChild(categoryLabel);
+    } else {
+      const built = document.createElement("span");
+      built.textContent = `Construidos: ${Number(node.built || 0)}`;
+      meta.appendChild(built);
+      const workers = document.createElement("span");
+      workers.textContent = `Trabajadores: ${Number(node.workers || 0)} / ${Number(node.max_workers || 0)}`;
+      meta.appendChild(workers);
+      const rateEntries = Object.entries(node.outputs_per_sec || {});
+      if (rateEntries.length) {
+        const list = document.createElement("ul");
+        list.className = "production-tree__list";
+        rateEntries.forEach(([resource, value]) => {
+          const item = document.createElement("li");
+          item.textContent = `+${formatPerSecondRate(value)} ${formatResourceKey(resource)}/s`;
+          list.appendChild(item);
+        });
+        element.appendChild(list);
+      }
+    }
+
+    element.addEventListener("click", () => {
+      if (type === "building") {
+        focusBuildingFromProduction(node.id);
+      } else {
+        focusResourceFromProduction(node.id);
+      }
+    });
+
+    return element;
+  }
+
+  function renderProductionTree() {
+    if (!featureFlags.production_tree?.enabled) {
+      return;
+    }
+    const elements = productionTreeElements;
+    if (!elements.grid) {
+      return;
+    }
+    const tree = ensureProductionTreeState();
+    updateProductionTreeFilterUI();
+    const filters = tree.filters;
+    const search = (filters.search || "").trim().toLowerCase();
+    const activeSet = new Set(filters.categories);
+    const buildingActive = new Map();
+    (tree.nodes || []).forEach((node) => {
+      if ((node.type || "resource") === "building") {
+        buildingActive.set(node.id, Boolean(node.active));
+      }
+    });
+    const activeResources = new Set();
+    if (filters.onlyActive) {
+      (tree.edges || []).forEach((edge) => {
+        if (buildingActive.get(edge.building_id)) {
+          activeResources.add(edge.from);
+          activeResources.add(edge.to);
+        }
+      });
+    }
+
+    const visibleNodes = [];
+    const nodeById = new Map();
+    (tree.nodes || []).forEach((node) => {
+      const type = String(node.type || "resource");
+      const category = String(node.category_group || "misc");
+      if (activeSet.size && !activeSet.has(category)) {
+        return;
+      }
+      if (filters.onlyActive) {
+        if (type === "building" && !buildingActive.get(node.id)) {
+          return;
+        }
+        if (type === "resource" && !activeResources.has(node.id) && !(node.stock && node.stock > 0)) {
+          return;
+        }
+      }
+      const label = String(node.label || node.name || node.id || "").toLowerCase();
+      if (search && !label.includes(search)) {
+        return;
+      }
+      visibleNodes.push(node);
+      nodeById.set(node.id, node);
+    });
+
+    const visibleIds = new Set(visibleNodes.map((node) => node.id));
+    const visibleEdges = (tree.edges || []).filter((edge) => {
+      if (!visibleIds.has(edge.from) || !visibleIds.has(edge.to)) {
+        return false;
+      }
+      if (filters.onlyActive && !buildingActive.get(edge.building_id)) {
+        return false;
+      }
+      return true;
+    });
+
+    const edgesByNode = new Map();
+    visibleEdges.forEach((edge) => {
+      if (!edgesByNode.has(edge.from)) {
+        edgesByNode.set(edge.from, []);
+      }
+      edgesByNode.get(edge.from).push(edge);
+    });
+
+    elements.grid.innerHTML = "";
+    const columns = new Map();
+    visibleNodes.forEach((node) => {
+      const depth = Number.isFinite(node.depth) ? Number(node.depth) : 0;
+      const bucket = columns.get(depth) || [];
+      bucket.push(node);
+      columns.set(depth, bucket);
+    });
+    const sortedColumns = Array.from(columns.entries()).sort((a, b) => a[0] - b[0]);
+    sortedColumns.forEach(([depth, nodes]) => {
+      const column = document.createElement("div");
+      column.className = "production-tree__column";
+      const title = document.createElement("h3");
+      title.className = "production-tree__column-title";
+      title.textContent = depth <= 0 ? "Materias primas" : depth % 2 === 0 ? `Recursos nivel ${depth / 2}` : "Edificios";
+      column.appendChild(title);
+      nodes
+        .sort((a, b) => {
+          const typeA = String(a.type || "resource");
+          const typeB = String(b.type || "resource");
+          if (typeA !== typeB) {
+            return typeA.localeCompare(typeB);
+          }
+          const labelA = String(a.label || a.name || a.id || "");
+          const labelB = String(b.label || b.name || b.id || "");
+          return labelA.localeCompare(labelB);
+        })
+        .forEach((node) => {
+          column.appendChild(createProductionTreeNode(node, edgesByNode));
+        });
+      elements.grid.appendChild(column);
+    });
+
+    renderProductionTreeEdges(visibleEdges, nodeById);
+
+    const hasVisible = visibleNodes.length > 0;
+    if (productionTreeElements.empty) {
+      productionTreeElements.empty.hidden = hasVisible;
+    }
+    if (productionTreeElements.emptyDiscovered) {
+      const shouldShow = !hasVisible && filters.onlyDiscovered && (!tree.meta || !(tree.meta.active_buildings || []).length);
+      productionTreeElements.emptyDiscovered.hidden = !shouldShow;
+    }
+    if (productionTreeElements.emptyConfig) {
+      const noRecipes = !tree.meta || !tree.meta.has_recipes;
+      productionTreeElements.emptyConfig.hidden = !noRecipes;
+      if (noRecipes) {
+        if (productionTreeElements.empty) productionTreeElements.empty.hidden = true;
+        if (productionTreeElements.emptyDiscovered) productionTreeElements.emptyDiscovered.hidden = true;
+      }
+    }
+  }
+
+  function renderProductionTreeEdges(edges, nodeLookup) {
+    if (!productionTreeElements.edges) {
+      return;
+    }
+    const container = productionTreeElements.edges;
+    container.innerHTML = "";
+    if (!edges || edges.length === 0) {
+      container.hidden = true;
+      return;
+    }
+    container.hidden = false;
+    edges.forEach((edge) => {
+      const element = document.createElement("div");
+      element.className = "production-tree__edge";
+      if (edge.bottleneck) {
+        element.classList.add("production-tree__edge--bottleneck");
+      }
+      const source = nodeLookup.get(edge.from);
+      const target = nodeLookup.get(edge.to);
+      const building = nodeLookup.get(edge.building_id);
+      const sourceLabel = source ? source.label || source.name || source.id : edge.from;
+      const targetLabel = target ? target.label || target.name || target.id : edge.to;
+      const buildingLabel = building ? building.label || building.name || building.id : edge.building_name;
+      element.innerHTML = `<span><strong>${formatResourceKey(sourceLabel || edge.from)}</strong> → ${formatResourceKey(targetLabel || edge.to)}</span><span>${buildingLabel || ""}</span>`;
+      const tooltipParts = [];
+      const inputs = edge.inputs || {};
+      const outputs = edge.outputs || {};
+      Object.entries(inputs).forEach(([resource, amount]) => {
+        tooltipParts.push(`Consume ${formatPerSecondRate(amount)} ${formatResourceKey(resource)} por ciclo`);
+      });
+      Object.entries(outputs).forEach(([resource, amount]) => {
+        tooltipParts.push(`Produce ${formatPerSecondRate(amount)} ${formatResourceKey(resource)} por ciclo`);
+      });
+      if (edge.bottleneck && edge.detail) {
+        tooltipParts.push(`Falta ${formatResourceKey(edge.detail)}`);
+      }
+      if (tooltipParts.length) {
+        element.title = tooltipParts.join("
+");
+      }
+      container.appendChild(element);
+    });
+  }
+
+  function focusBuildingFromProduction(buildingId) {
+    const targetId = String(buildingId || "");
+    if (!targetId) {
+      return;
+    }
+    setActiveView("buildings", { force: true });
+    const entry = buildingElementMap.get(targetId);
+    if (entry && entry.article) {
+      entry.article.classList.add("building-card--highlighted");
+      if (typeof entry.article.scrollIntoView === "function") {
+        entry.article.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+      setTimeout(() => {
+        entry.article.classList.remove("building-card--highlighted");
+      }, 1800);
+    }
+  }
+
+  function focusResourceFromProduction(resourceId) {
+    if (!resourceId) {
+      return;
+    }
+    activateResourceFilter(resourceId);
+    setActiveView("buildings", { force: true });
+  }
 
   initialiseVillageDesign();
   startWoodPolling();
