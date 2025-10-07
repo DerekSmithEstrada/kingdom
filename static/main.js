@@ -1517,7 +1517,6 @@
   const villageDesignElements = villageDesignPanel
     ? {
         grid: villageDesignPanel.querySelector("[data-village-grid]"),
-        gridWrapper: villageDesignPanel.querySelector(".village-grid-wrapper"),
         sidebar: villageDesignPanel.querySelector("[data-village-sidebar]"),
         sidebarPlaceholder: villageDesignPanel.querySelector(
           "[data-village-sidebar-empty]"
@@ -1534,23 +1533,61 @@
         detailProduction: villageDesignPanel.querySelector(
           "[data-village-detail-production]"
         ),
+        detailInputs: villageDesignPanel.querySelector("[data-village-detail-inputs]"),
         detailEfficiency: villageDesignPanel.querySelector(
           "[data-village-detail-efficiency]"
         ),
         detailTransport: villageDesignPanel.querySelector(
           "[data-village-detail-transport]"
         ),
-        detailNotes: villageDesignPanel.querySelector("[data-village-detail-notes]"),
-        demolishButton: villageDesignPanel.querySelector("[data-village-demolish]"),
-        status: villageDesignPanel.querySelector("[data-village-status]"),
-        buildMenu: villageDesignPanel.querySelector("[data-village-build-menu]"),
-        buildPanel: villageDesignPanel.querySelector(
-          "[data-village-build-menu] .village-build-menu__panel"
+        detailWorkers: villageDesignPanel.querySelector(
+          "[data-village-detail-workers]"
         ),
-        buildList: villageDesignPanel.querySelector("[data-village-build-list]"),
-        buildClose: villageDesignPanel.querySelector("[data-village-build-close]"),
+        detailNotes: villageDesignPanel.querySelector("[data-village-detail-notes]"),
+        actionUpgrade: villageDesignPanel.querySelector(
+          '[data-village-action="upgrade"]'
+        ),
+        actionDemolish: villageDesignPanel.querySelector(
+          '[data-village-action="demolish"]'
+        ),
+        status: villageDesignPanel.querySelector("[data-village-status]"),
         saveButton: villageDesignPanel.querySelector("[data-village-save]"),
         loadButton: villageDesignPanel.querySelector("[data-village-load]"),
+        buildingList: villageDesignPanel.querySelector(
+          "[data-village-building-list]"
+        ),
+        buildingEmpty: villageDesignPanel.querySelector(
+          "[data-village-catalog-empty]"
+        ),
+        viewTabs: Array.from(
+          villageDesignPanel.querySelectorAll("[data-village-view-tab]") || []
+        ),
+        viewPanels: new Map(
+          Array.from(
+            villageDesignPanel.querySelectorAll("[data-village-view-panel]") || []
+          ).map((panel) => [panel.dataset.villageViewPanel, panel])
+        ),
+        blueprintBanner: villageDesignPanel.querySelector("[data-village-blueprint]"),
+        blueprintLabel: villageDesignPanel.querySelector(
+          "[data-village-blueprint-label]"
+        ),
+        blueprintIcon: villageDesignPanel.querySelector(
+          "[data-village-blueprint-icon]"
+        ),
+        blueprintCancel: villageDesignPanel.querySelector(
+          "[data-village-blueprint-clear]"
+        ),
+        supplyList: villageDesignPanel.querySelector("[data-supply-status-list]"),
+        supplyTotalsProduction: villageDesignPanel.querySelector(
+          "[data-supply-total-production]"
+        ),
+        supplyTotalsConsumption: villageDesignPanel.querySelector(
+          "[data-supply-total-consumption]"
+        ),
+        resourceFlow: villageDesignPanel.querySelector("[data-resource-flow]"),
+        resourceFlowEmpty: villageDesignPanel.querySelector(
+          "[data-resource-flow-empty]"
+        ),
         resourceValues: new Map(
           Array.from(
             villageDesignPanel.querySelectorAll("[data-village-resource]") || []
@@ -1562,8 +1599,23 @@
   const VILLAGE_CATEGORY_LABELS = {
     production: "Production",
     housing: "Housing",
-    transport: "Transport",
     storage: "Storage",
+    transport: "Transport",
+    support: "Support",
+  };
+
+  const VILLAGE_CATEGORY_ORDER = [
+    "production",
+    "housing",
+    "storage",
+    "transport",
+    "support",
+  ];
+
+  const SUPPLY_STATUS_LABELS = {
+    operational: "Operational",
+    bottleneck: "Limited supply",
+    inactive: "Idle",
   };
 
   const VILLAGE_TERRAIN_COLORS = {
@@ -1581,10 +1633,15 @@
     snapshot: null,
     selected: null,
     hover: null,
-    buildMenuTarget: null,
-    buildMenuCoordinates: null,
     catalog: new Map(),
     isLoading: false,
+    activeView: "buildings",
+    blueprint: null,
+    blueprintDefinition: null,
+    lastResources: {},
+    supply: { buildings: [], totals: { production: {}, consumption: {} } },
+    flow: { nodes: [], links: [] },
+    lastBuilt: null,
   };
 
   function getVillageCellKey(x, y) {
@@ -1632,31 +1689,48 @@
     const resources = (snapshot && snapshot.resources) || {};
     const population = (snapshot && snapshot.population) || {};
     const { resourceValues } = villageDesignElements;
-    const woodElement = resourceValues.get("wood");
-    const stoneElement = resourceValues.get("stone");
-    const foodElement = resourceValues.get("food");
-    const goldElement = resourceValues.get("gold");
+    const trackedResources = [
+      "gold",
+      "wood",
+      "planks",
+      "stone",
+      "sticks",
+      "tools",
+    ];
+    const nextResourceState = { ...villageDesignState.lastResources };
+    trackedResources.forEach((key) => {
+      const element = resourceValues.get(key);
+      if (!element) {
+        return;
+      }
+      const numeric = Number(resources[key]) || 0;
+      const previous = Number(villageDesignState.lastResources[key]) || 0;
+      element.textContent = formatAmount(numeric);
+      if (numeric > previous + 1e-6) {
+        element.classList.add("is-gaining");
+        window.setTimeout(() => {
+          element.classList.remove("is-gaining");
+        }, 500);
+      }
+      nextResourceState[key] = numeric;
+    });
     const villagerElement = resourceValues.get("villagers");
-
-    if (woodElement) {
-      woodElement.textContent = formatAmount(resources.wood || 0);
-    }
-    if (stoneElement) {
-      stoneElement.textContent = formatAmount(resources.stone || 0);
-    }
-    if (foodElement) {
-      foodElement.textContent = formatAmount(resources.food || 0);
-    }
-    if (goldElement) {
-      goldElement.textContent = formatAmount(resources.gold || 0);
-    }
     if (villagerElement) {
       const current = Number(population.current) || 0;
       const capacity = Number(population.capacity) || 0;
+      const previous = Number(villageDesignState.lastResources.villagers) || 0;
       villagerElement.textContent = `${formatAmount(current)}/${formatAmount(
         capacity
       )}`;
+      if (current > previous + 1e-6) {
+        villagerElement.classList.add("is-gaining");
+        window.setTimeout(() => {
+          villagerElement.classList.remove("is-gaining");
+        }, 500);
+      }
+      nextResourceState.villagers = current;
     }
+    villageDesignState.lastResources = nextResourceState;
   }
 
   function formatEfficiencyMultiplier(multiplier) {
@@ -1712,10 +1786,117 @@
       .join(" • ");
   }
 
-  function buildVillageCellTitle(cell) {
-    if (!cell) {
+  function formatResourceSummary(resourceMap, prefix) {
+    if (!resourceMap || typeof resourceMap !== "object") {
       return "";
     }
+    const entries = Object.entries(resourceMap)
+      .map(([resource, value]) => {
+        const numericValue =
+          value && typeof value === "object"
+            ? value.required ?? value.available ?? value.rate
+            : value;
+        const numeric = Number(numericValue);
+        if (!Number.isFinite(numeric) || Math.abs(numeric) < 1e-6) {
+          return null;
+        }
+        return `${formatAmount(Math.abs(numeric))} ${formatResourceKey(resource)}`;
+      })
+      .filter(Boolean);
+    if (!entries.length) {
+      return "";
+    }
+    return prefix ? `${prefix}: ${entries.join(" • ")}` : entries.join(" • ");
+  }
+
+  function formatVillageInputsDetail(inputs) {
+    if (!inputs || typeof inputs !== "object") {
+      return "None";
+    }
+    const entries = Object.entries(inputs)
+      .map(([resource, detail]) => {
+        if (detail && typeof detail === "object") {
+          const required = Number(detail.required);
+          const actual = Number(detail.actual_rate);
+          const available = Number(detail.available);
+          const distance = Number(detail.distance);
+          const status = detail.status;
+          const base = Number.isFinite(required) && required > 0
+            ? required
+            : Number.isFinite(actual) && actual > 0
+            ? actual
+            : Number.isFinite(available) && available > 0
+            ? available
+            : 0;
+          if (base <= 0) {
+            return null;
+          }
+          let text = `${formatAmount(base)} ${formatResourceKey(resource)}/min`;
+          if (Number.isFinite(actual) && Math.abs(actual - base) > 1e-3) {
+            text += ` (actual ${formatAmount(Math.max(actual, 0))})`;
+          }
+          if (
+            Number.isFinite(available) &&
+            available > 0 &&
+            available < base - 1e-3
+          ) {
+            text += ` (avail ${formatAmount(available)})`;
+          }
+          if (status && status !== "ok") {
+            text += ` – ${formatResourceKey(status)}`;
+          }
+          if (Number.isFinite(distance) && distance > 0) {
+            text += ` @${Math.round(distance)} tiles`;
+          }
+          return text;
+        }
+        const numeric = Number(detail);
+        if (!Number.isFinite(numeric) || numeric <= 0) {
+          return null;
+        }
+        return `${formatAmount(numeric)} ${formatResourceKey(resource)}/min`;
+      })
+      .filter(Boolean);
+    if (!entries.length) {
+      return "None";
+    }
+    return entries.join(" • ");
+  }
+
+  function formatVillageWorkers(building) {
+    if (!building || typeof building !== "object") {
+      return "0";
+    }
+    const requiredCandidates = [
+      building.workers_required,
+      building.workers,
+      building.max_workers,
+    ];
+    const assignedCandidates = [
+      building.assigned_workers,
+      building.active_workers,
+      building.workers,
+    ];
+    const required = requiredCandidates.find((value) =>
+      Number.isFinite(Number(value))
+    );
+    const assigned = assignedCandidates.find((value) =>
+      Number.isFinite(Number(value))
+    );
+    const requiredValue = Number(required) || 0;
+    const assignedValue = Number(assigned) || 0;
+    if (requiredValue > 0) {
+      return `${formatAmount(Math.max(assignedValue, 0))}/${formatAmount(
+        requiredValue
+      )}`;
+    }
+    return formatAmount(Math.max(assignedValue, 0));
+  }
+
+    function buildVillageCellTitle(cell) {
+      if (!cell) {
+        return "";
+      }
     const coordinates = `(${cell.x + 1}, ${cell.y + 1})`;
     if (cell.building) {
       const building = cell.building;
@@ -1733,8 +1914,16 @@
         `${building.name || "Structure"} — ${categoryLabel}`,
         `Level ${building.level || 1} ${coordinates}`,
       ];
+      const statusLabel =
+        SUPPLY_STATUS_LABELS[building.status] ||
+        formatResourceKey(building.status || "operational");
+      lines.push(`Status: ${statusLabel}`);
       if (productionSummary) {
         lines.push(`Production: ${productionSummary}`);
+      }
+      const inputsSummary = formatResourceSummary(building.inputs, "Inputs");
+      if (inputsSummary) {
+        lines.push(inputsSummary);
       }
       lines.push(
         efficiencyBonus === "+0%"
@@ -1743,6 +1932,9 @@
       );
       if (transportText && transportText !== "+0%") {
         lines.push(`Transport: ${transportText}`);
+      }
+      if (typeof building.workers_required === "number") {
+        lines.push(`Workers: ${building.workers_required}`);
       }
       if (Array.isArray(cell.notes) && cell.notes.length) {
         lines.push(cell.notes.join(" • "));
@@ -1780,6 +1972,19 @@
     return catalog;
   }
 
+  function findCatalogDefinition(buildingId) {
+    if (!buildingId || !(villageDesignState.catalog instanceof Map)) {
+      return null;
+    }
+    for (const definitions of villageDesignState.catalog.values()) {
+      const match = definitions.find((entry) => entry.id === buildingId);
+      if (match) {
+        return match;
+      }
+    }
+    return null;
+  }
+
   function applyVillageSnapshot(snapshot, options = {}) {
     if (!snapshot) {
       return;
@@ -1788,6 +1993,11 @@
     const previousSelection = preserveSelection ? villageDesignState.selected : null;
     villageDesignState.snapshot = snapshot;
     villageDesignState.catalog = buildCatalogMap(snapshot);
+    villageDesignState.supply = snapshot.supply_overview || {
+      buildings: [],
+      totals: { production: {}, consumption: {} },
+    };
+    villageDesignState.flow = snapshot.resource_flow || { nodes: [], links: [] };
     if (selectedKey) {
       villageDesignState.selected = selectedKey;
     } else if (preserveSelection && previousSelection) {
@@ -1797,9 +2007,21 @@
         : false;
       villageDesignState.selected = hasCell ? previousSelection : null;
     }
+    if (
+      villageDesignState.blueprint &&
+      !findCatalogDefinition(villageDesignState.blueprint)
+    ) {
+      villageDesignState.blueprint = null;
+      villageDesignState.blueprintDefinition = null;
+    }
     updateVillageResources(snapshot);
+    renderVillageCatalog();
     renderVillageGrid();
+    renderSupplyOverview();
+    renderResourceFlow();
     updateVillageSidebar();
+    renderBlueprintState();
+    switchVillageView(villageDesignState.activeView || "buildings");
   }
 
   function renderVillageGrid() {
@@ -1820,6 +2042,8 @@
         button.className = "village-grid__cell";
         button.dataset.x = String(cell.x);
         button.dataset.y = String(cell.y);
+        const key = getVillageCellKey(cell.x, cell.y);
+        button.dataset.cellKey = key;
         const hasBuilding = Boolean(cell.building);
         button.dataset.hasBuilding = hasBuilding ? "true" : "false";
         button.dataset.state = hasBuilding ? "occupied" : "empty";
@@ -1854,10 +2078,46 @@
         button.dataset.efficiencyBonus = efficiencyBonus.toFixed(3);
         button.dataset.transportBonus = transportBonus.toFixed(3);
 
+        const statusKey = hasBuilding
+          ? (cell.state && cell.state.status) || cell.building.status || ""
+          : "";
+        if (statusKey) {
+          button.dataset.status = statusKey;
+        } else {
+          button.removeAttribute("data-status");
+        }
+
+        if (!hasBuilding && villageDesignState.blueprint) {
+          button.classList.add("is-blueprint-target");
+        }
+
         const terrainLabel = document.createElement("span");
         terrainLabel.className = "village-grid__terrain-label";
         terrainLabel.textContent = cell.terrain.label;
         button.appendChild(terrainLabel);
+
+        if (hasBuilding) {
+          const actions = document.createElement("div");
+          actions.className = "village-grid__actions";
+          const upgradeBtn = document.createElement("button");
+          upgradeBtn.type = "button";
+          upgradeBtn.className = "village-grid__action";
+          upgradeBtn.dataset.villageAction = "upgrade";
+          upgradeBtn.dataset.x = String(cell.x);
+          upgradeBtn.dataset.y = String(cell.y);
+          upgradeBtn.title = "Upgrade building";
+          upgradeBtn.textContent = "+";
+          const demolishBtn = document.createElement("button");
+          demolishBtn.type = "button";
+          demolishBtn.className = "village-grid__action";
+          demolishBtn.dataset.villageAction = "demolish";
+          demolishBtn.dataset.x = String(cell.x);
+          demolishBtn.dataset.y = String(cell.y);
+          demolishBtn.title = "Demolish building";
+          demolishBtn.textContent = "×";
+          actions.append(upgradeBtn, demolishBtn);
+          button.appendChild(actions);
+        }
 
         const content = document.createElement("div");
         content.className = "village-grid__content";
@@ -1878,6 +2138,14 @@
 
         const category = document.createElement("span");
         category.className = "village-grid__category";
+        const categoryKey = hasBuilding
+          ? String(cell.building.category || "").toLowerCase()
+          : null;
+        if (categoryKey) {
+          button.dataset.category = categoryKey;
+        } else {
+          button.removeAttribute("data-category");
+        }
         category.textContent = hasBuilding
           ? getVillageCategoryLabel(cell.building.category)
           : "Available";
@@ -1891,14 +2159,22 @@
         if (hasBuilding) {
           button.dataset.buildingId = cell.building.id || "";
           button.dataset.buildingType = cell.building.type || "";
+          button.dataset.level = String(cell.building.level || 1);
           const level = document.createElement("span");
           level.className = "village-grid__level";
           level.textContent = `Lv ${cell.building.level || 1}`;
-          button.dataset.level = String(cell.building.level || 1);
           footer.appendChild(level);
 
           const badges = document.createElement("div");
           badges.className = "village-grid__badges";
+
+          const statusBadge = document.createElement("span");
+          statusBadge.className = "village-grid__badge";
+          statusBadge.dataset.status = statusKey || "operational";
+          statusBadge.textContent =
+            SUPPLY_STATUS_LABELS[statusKey] ||
+            formatResourceKey(statusKey || "operational");
+          badges.appendChild(statusBadge);
 
           const efficiencyBadge = document.createElement("span");
           efficiencyBadge.className =
@@ -1916,12 +2192,11 @@
               : `${efficiencyText} ${efficiencyBonusText}`;
           badges.appendChild(efficiencyBadge);
 
-          const transportText = formatTransportBonus(transportBonus);
-          if (transportText !== "+0%") {
+          if (transportBonus) {
             const transportBadge = document.createElement("span");
             transportBadge.className =
               "village-grid__badge village-grid__badge--transport";
-            transportBadge.textContent = transportText;
+            transportBadge.textContent = formatTransportBonus(transportBonus);
             badges.appendChild(transportBadge);
           }
 
@@ -1938,7 +2213,9 @@
         } else {
           const hint = document.createElement("span");
           hint.className = "village-grid__hint";
-          hint.textContent = "Click to build";
+          hint.textContent = villageDesignState.blueprint
+            ? "Click to place blueprint"
+            : "Empty tile";
           footer.appendChild(hint);
           button.setAttribute(
             "aria-label",
@@ -1953,6 +2230,329 @@
     });
     gridElement.appendChild(fragment);
     highlightVillageSelection();
+    if (villageDesignState.lastBuilt) {
+      const recent = gridElement.querySelector(
+        `[data-cell-key="${villageDesignState.lastBuilt}"]`
+      );
+      if (recent) {
+        recent.classList.add("is-spawned");
+        window.setTimeout(() => {
+          recent.classList.remove("is-spawned");
+        }, 600);
+      }
+      villageDesignState.lastBuilt = null;
+    }
+  }
+
+  function switchVillageView(viewKey) {
+    if (!villageDesignElements) {
+      return;
+    }
+    const target = viewKey || "buildings";
+    villageDesignState.activeView = target;
+    if (Array.isArray(villageDesignElements.viewTabs)) {
+      villageDesignElements.viewTabs.forEach((tab) => {
+        if (!tab || !tab.dataset) {
+          return;
+        }
+        const isActive = tab.dataset.villageViewTab === target;
+        tab.classList.toggle("is-active", isActive);
+        tab.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+    }
+    if (villageDesignElements.viewPanels instanceof Map) {
+      villageDesignElements.viewPanels.forEach((panel, key) => {
+        if (!panel) {
+          return;
+        }
+        const isActive = key === target;
+        panel.hidden = !isActive;
+        panel.classList.toggle("is-active", isActive);
+      });
+    }
+  }
+
+  function renderBlueprintState() {
+    if (!villageDesignElements) {
+      return;
+    }
+    const banner = villageDesignElements.blueprintBanner;
+    const blueprintId = villageDesignState.blueprint;
+    const definition = blueprintId ? findCatalogDefinition(blueprintId) : null;
+    villageDesignState.blueprintDefinition = definition || null;
+    if (banner) {
+      if (!definition) {
+        banner.hidden = true;
+      } else {
+        banner.hidden = false;
+        if (villageDesignElements.blueprintIcon) {
+          villageDesignElements.blueprintIcon.textContent =
+            definition.icon || "🏗️";
+        }
+        if (villageDesignElements.blueprintLabel) {
+          villageDesignElements.blueprintLabel.textContent =
+            `${definition.name || formatResourceKey(definition.id)} blueprint ready`;
+        }
+      }
+    }
+    if (villageDesignElements.buildingList) {
+      villageDesignElements.buildingList
+        .querySelectorAll(".village-card")
+        .forEach((card) => {
+          const isActive = card.dataset.buildingId === blueprintId;
+          card.classList.toggle("is-active", isActive);
+          const action = card.querySelector(".village-card__action");
+          if (action) {
+            action.textContent = isActive ? "Selected" : "Select blueprint";
+            action.disabled = isActive;
+          }
+        });
+    }
+  }
+
+  function selectBlueprint(buildingId) {
+    const definition = findCatalogDefinition(buildingId);
+    if (!definition) {
+      clearBlueprint();
+      return;
+    }
+    villageDesignState.blueprint = definition.id;
+    villageDesignState.blueprintDefinition = definition;
+    renderBlueprintState();
+    switchVillageView("map");
+  }
+
+  function clearBlueprint() {
+    villageDesignState.blueprint = null;
+    villageDesignState.blueprintDefinition = null;
+    renderBlueprintState();
+  }
+
+  function renderVillageCatalog() {
+    if (!villageDesignElements || !villageDesignElements.buildingList) {
+      return;
+    }
+    const list = villageDesignElements.buildingList;
+    list.innerHTML = "";
+    const catalog = villageDesignState.catalog;
+    if (!(catalog instanceof Map) || catalog.size === 0) {
+      if (villageDesignElements.buildingEmpty) {
+        villageDesignElements.buildingEmpty.hidden = false;
+      }
+      renderBlueprintState();
+      return;
+    }
+    if (villageDesignElements.buildingEmpty) {
+      villageDesignElements.buildingEmpty.hidden = true;
+    }
+    const orderedCategories = [
+      ...VILLAGE_CATEGORY_ORDER.filter((category) => catalog.has(category)),
+      ...Array.from(catalog.keys()).filter(
+        (category) => !VILLAGE_CATEGORY_ORDER.includes(category)
+      ),
+    ];
+    orderedCategories.forEach((category) => {
+      const definitions = catalog.get(category);
+      if (!definitions || !definitions.length) {
+        return;
+      }
+      const section = document.createElement("section");
+      section.className = "village-catalog__group";
+      const heading = document.createElement("h3");
+      heading.className = "village-catalog__heading";
+      heading.textContent = getVillageCategoryLabel(category);
+      section.appendChild(heading);
+      const cards = document.createElement("div");
+      cards.className = "village-catalog__list";
+      definitions.forEach((definition) => {
+        const card = document.createElement("article");
+        card.className = "village-card";
+        card.dataset.buildingId = definition.id;
+        const header = document.createElement("header");
+        header.className = "village-card__header";
+        const icon = document.createElement("span");
+        icon.className = "village-card__icon";
+        icon.textContent = definition.icon || "🏗️";
+        const titleWrapper = document.createElement("div");
+        const title = document.createElement("h4");
+        title.className = "village-card__title";
+        title.textContent = definition.name || formatResourceKey(definition.id);
+        const tag = document.createElement("span");
+        tag.className = "village-card__tag";
+        tag.textContent = `Tier ${definition.tier ?? 0}`;
+        titleWrapper.append(title, tag);
+        header.append(icon, titleWrapper);
+        card.appendChild(header);
+        if (definition.description) {
+          const body = document.createElement("p");
+          body.className = "village-card__body";
+          body.textContent = definition.description;
+          card.appendChild(body);
+        }
+        const io = document.createElement("div");
+        io.className = "village-card__io";
+        const inputsText = formatResourceSummary(definition.inputs, "Uses");
+        if (inputsText) {
+          const span = document.createElement("span");
+          span.textContent = inputsText;
+          io.appendChild(span);
+        }
+        const outputsText = formatResourceSummary(definition.production, "Makes");
+        if (outputsText) {
+          const span = document.createElement("span");
+          span.textContent = outputsText;
+          io.appendChild(span);
+        }
+        if (io.childElementCount) {
+          card.appendChild(io);
+        }
+        const footer = document.createElement("div");
+        footer.className = "village-card__footer";
+        const action = document.createElement("button");
+        action.type = "button";
+        action.className = "village-card__action";
+        action.dataset.blueprintId = definition.id;
+        action.textContent = "Select blueprint";
+        footer.appendChild(action);
+        card.appendChild(footer);
+        cards.appendChild(card);
+      });
+      section.appendChild(cards);
+      list.appendChild(section);
+    });
+    renderBlueprintState();
+  }
+
+  function renderSupplyOverview() {
+    if (!villageDesignElements) {
+      return;
+    }
+    const buildings = Array.isArray(villageDesignState.supply?.buildings)
+      ? villageDesignState.supply.buildings
+      : [];
+    if (villageDesignElements.supplyList) {
+      const list = villageDesignElements.supplyList;
+      list.innerHTML = "";
+      buildings.forEach((entry) => {
+        const item = document.createElement("li");
+        item.className = "supply-status-list__item";
+        const statusKey = entry.status || "operational";
+        item.dataset.status = statusKey;
+        const title = document.createElement("strong");
+        title.textContent = entry.name || formatResourceKey(entry.id || "building");
+        item.appendChild(title);
+        const details = document.createElement("span");
+        const statusLabel =
+          SUPPLY_STATUS_LABELS[statusKey] || formatResourceKey(statusKey);
+        const efficiency = Number(entry.efficiency) || 0;
+        details.textContent = `${statusLabel} • Eff ${Math.round(
+          efficiency * 100
+        )}%`;
+        item.appendChild(details);
+        const outputsSummary = formatResourceSummary(entry.outputs, "Outputs");
+        if (outputsSummary) {
+          const outputsLine = document.createElement("span");
+          outputsLine.textContent = outputsSummary;
+          item.appendChild(outputsLine);
+        }
+        const inputsSummary = formatResourceSummary(entry.inputs, "Inputs");
+        if (inputsSummary) {
+          const inputsLine = document.createElement("span");
+          inputsLine.textContent = inputsSummary;
+          item.appendChild(inputsLine);
+        }
+        list.appendChild(item);
+      });
+    }
+    const totals = villageDesignState.supply?.totals || {};
+    if (villageDesignElements.supplyTotalsProduction) {
+      villageDesignElements.supplyTotalsProduction.innerHTML = "";
+      const productionEntries = Object.entries(totals.production || {});
+      productionEntries.forEach(([resource, value]) => {
+        const item = document.createElement("li");
+        item.textContent = `${formatAmount(value)} ${formatResourceKey(
+          resource
+        )}/min`;
+        villageDesignElements.supplyTotalsProduction.appendChild(item);
+      });
+      if (!productionEntries.length) {
+        const item = document.createElement("li");
+        item.textContent = "—";
+        villageDesignElements.supplyTotalsProduction.appendChild(item);
+      }
+    }
+    if (villageDesignElements.supplyTotalsConsumption) {
+      villageDesignElements.supplyTotalsConsumption.innerHTML = "";
+      const consumptionEntries = Object.entries(totals.consumption || {});
+      consumptionEntries.forEach(([resource, value]) => {
+        const item = document.createElement("li");
+        item.textContent = `${formatAmount(value)} ${formatResourceKey(
+          resource
+        )}/min`;
+        villageDesignElements.supplyTotalsConsumption.appendChild(item);
+      });
+      if (!consumptionEntries.length) {
+        const item = document.createElement("li");
+        item.textContent = "—";
+        villageDesignElements.supplyTotalsConsumption.appendChild(item);
+      }
+    }
+  }
+
+  function renderResourceFlow() {
+    if (!villageDesignElements || !villageDesignElements.resourceFlow) {
+      return;
+    }
+    const container = villageDesignElements.resourceFlow;
+    container.innerHTML = "";
+    const flow = villageDesignState.flow || {};
+    const nodes = new Map(
+      Array.isArray(flow.nodes)
+        ? flow.nodes.map((node) => [node.id, node])
+        : []
+    );
+    const links = Array.isArray(flow.links) ? flow.links : [];
+    if (!links.length) {
+      if (villageDesignElements.resourceFlowEmpty) {
+        villageDesignElements.resourceFlowEmpty.hidden = false;
+      }
+      return;
+    }
+    if (villageDesignElements.resourceFlowEmpty) {
+      villageDesignElements.resourceFlowEmpty.hidden = true;
+    }
+    links.forEach((link) => {
+      const fromNode = nodes.get(link.from);
+      const toNode = nodes.get(link.to);
+      if (!fromNode || !toNode) {
+        return;
+      }
+      const row = document.createElement("div");
+      row.className = "resource-flow__link";
+      const from = document.createElement("strong");
+      from.textContent = `${fromNode.icon || "🏗️"} ${
+        fromNode.name || formatResourceKey(fromNode.type || "building")
+      }`;
+      const arrow = document.createElement("span");
+      arrow.className = "resource-flow__arrow";
+      arrow.textContent = "→";
+      const to = document.createElement("strong");
+      to.textContent = `${toNode.icon || "🏗️"} ${
+        toNode.name || formatResourceKey(toNode.type || "building")
+      }`;
+      const resource = document.createElement("span");
+      resource.textContent = `${formatAmount(link.rate || 0)} ${formatResourceKey(
+        link.resource || "resource"
+      )}/min`;
+      row.append(from, arrow, to, resource);
+      if (typeof link.distance === "number") {
+        const meta = document.createElement("span");
+        meta.className = "resource-flow__meta";
+        meta.textContent = `distance ${link.distance}`;
+        row.appendChild(meta);
+      }
+      container.appendChild(row);
+    });
   }
 
   function highlightVillageSelection() {
@@ -1971,315 +2571,239 @@
       });
   }
 
-  function updateVillageSidebar(targetCell) {
-    if (!villageDesignElements) {
-      return;
-    }
-    const {
-      sidebar,
-      sidebarPlaceholder,
-      sidebarContent,
-      detailIcon,
-      detailName,
-      detailMeta,
-      detailDescription,
-      detailProduction,
-      detailEfficiency,
-      detailTransport,
-      detailNotes,
-      demolishButton,
-    } = villageDesignElements;
-    if (!sidebar) {
-      return;
-    }
-    const snapshot = villageDesignState.snapshot;
-    let cell = targetCell;
-    if (!cell && villageDesignState.selected) {
-      const [sx, sy] = villageDesignState.selected
-        .split(",")
-        .map((value) => Number(value));
-      if (Number.isFinite(sx) && Number.isFinite(sy)) {
-        cell = getVillageCell(snapshot, sx, sy);
+    function updateVillageSidebar(targetCell) {
+      if (!villageDesignElements) {
+        return;
       }
-    }
+      const {
+        sidebar,
+        sidebarPlaceholder,
+        sidebarContent,
+        detailIcon,
+        detailName,
+        detailMeta,
+        detailDescription,
+        detailProduction,
+        detailInputs,
+        detailEfficiency,
+        detailTransport,
+        detailWorkers,
+        detailNotes,
+        actionUpgrade,
+        actionDemolish,
+      } = villageDesignElements;
+      if (!sidebar) {
+        return;
+      }
+      const snapshot = villageDesignState.snapshot;
+      let cell = targetCell;
+      if (!cell && villageDesignState.selected) {
+        const [sx, sy] = villageDesignState.selected
+          .split(",")
+          .map((value) => Number(value));
+        if (Number.isFinite(sx) && Number.isFinite(sy)) {
+          cell = getVillageCell(snapshot, sx, sy);
+        }
+      }
 
-    if (!cell) {
+      if (!cell) {
+        if (sidebarPlaceholder) {
+          sidebarPlaceholder.hidden = false;
+        }
+        if (sidebarContent) {
+          sidebarContent.hidden = true;
+        }
+        if (actionUpgrade) {
+          actionUpgrade.hidden = true;
+        }
+        if (actionDemolish) {
+          actionDemolish.hidden = true;
+        }
+        return;
+      }
+
       if (sidebarPlaceholder) {
-        sidebarPlaceholder.hidden = false;
+        sidebarPlaceholder.hidden = true;
       }
       if (sidebarContent) {
-        sidebarContent.hidden = true;
+        sidebarContent.hidden = false;
       }
-      if (demolishButton) {
-        demolishButton.hidden = true;
-      }
-      return;
-    }
 
-    if (sidebarPlaceholder) {
-      sidebarPlaceholder.hidden = true;
-    }
-    if (sidebarContent) {
-      sidebarContent.hidden = false;
-    }
-
-    if (cell.building) {
-      const building = cell.building;
-      if (detailIcon) {
-        detailIcon.textContent = building.icon || "🏡";
-      }
-      if (detailName) {
-        detailName.textContent = building.name || "Structure";
-      }
-      if (detailMeta) {
+      if (cell.building) {
+        const building = cell.building;
         const categoryLabel = getVillageCategoryLabel(building.category);
-        detailMeta.textContent = `${categoryLabel} • Level ${
-          building.level || 1
-        } • (${cell.x + 1}, ${cell.y + 1})`;
-      }
-      if (detailDescription) {
-        detailDescription.textContent = building.description || "";
-      }
-      if (detailProduction) {
-        detailProduction.textContent = formatVillageProduction(
-          building.production_per_minute
-        );
-      }
-      if (detailEfficiency) {
-        const efficiencyText = formatEfficiencyMultiplier(building.efficiency);
-        const efficiencyBonus = formatEfficiencyBonus(
-          building.efficiency,
-          building.base_efficiency || 1
-        );
-        detailEfficiency.textContent =
-          efficiencyBonus === "+0%"
-            ? efficiencyText
-            : `${efficiencyText} (${efficiencyBonus})`;
-      }
-      if (detailTransport) {
-        detailTransport.textContent = formatTransportBonus(
-          cell.transport_bonus
-        );
-      }
-      if (detailNotes) {
-        detailNotes.innerHTML = "";
-        const notes = [];
-        if (Array.isArray(cell.notes)) {
-          notes.push(...cell.notes);
+        const statusLabel =
+          SUPPLY_STATUS_LABELS[building.status] ||
+          formatResourceKey(building.status || "operational");
+        if (detailIcon) {
+          detailIcon.textContent = building.icon || "🏡";
         }
-        if (Array.isArray(building.efficiency_notes)) {
-          building.efficiency_notes.forEach((note) => {
-            if (!notes.includes(note)) {
-              notes.push(note);
-            }
-          });
+        if (detailName) {
+          detailName.textContent = building.name || "Structure";
         }
-        if (notes.length) {
+        if (detailMeta) {
+          detailMeta.textContent = `${categoryLabel} • Level ${
+            building.level || 1
+          } • ${statusLabel} • (${cell.x + 1}, ${cell.y + 1})`;
+        }
+        if (detailDescription) {
+          detailDescription.textContent = building.description || "";
+        }
+        if (detailProduction) {
+          detailProduction.textContent =
+            formatVillageProduction(building.production_per_minute) ||
+            "Passive effect";
+        }
+        if (detailInputs) {
+          detailInputs.textContent = formatVillageInputsDetail(building.inputs);
+        }
+        if (detailEfficiency) {
+          const efficiencyText = formatEfficiencyMultiplier(building.efficiency);
+          const efficiencyBonus = formatEfficiencyBonus(
+            building.efficiency,
+            building.base_efficiency || 1
+          );
+          detailEfficiency.textContent =
+            efficiencyBonus === "+0%"
+              ? efficiencyText
+              : `${efficiencyText} (${efficiencyBonus})`;
+        }
+        if (detailTransport) {
+          detailTransport.textContent = formatTransportBonus(
+            cell.transport_bonus
+          );
+        }
+        if (detailWorkers) {
+          detailWorkers.textContent = formatVillageWorkers(building);
+        }
+        if (detailNotes) {
+          detailNotes.innerHTML = "";
+          const notes = [];
+          if (Array.isArray(cell.notes)) {
+            notes.push(...cell.notes);
+          }
+          if (Array.isArray(building.efficiency_notes)) {
+            building.efficiency_notes.forEach((note) => {
+              if (!notes.includes(note)) {
+                notes.push(note);
+              }
+            });
+          }
+          if (!notes.length) {
+            notes.push("No modifiers applied.");
+          }
           notes.forEach((entry) => {
             const item = document.createElement("li");
             item.textContent = entry;
             detailNotes.appendChild(item);
           });
-        } else {
-          const item = document.createElement("li");
-          item.textContent = "No modifiers applied.";
-          detailNotes.appendChild(item);
+        }
+        if (actionUpgrade) {
+          actionUpgrade.hidden = false;
+          actionUpgrade.dataset.x = String(cell.x);
+          actionUpgrade.dataset.y = String(cell.y);
+          actionUpgrade.disabled = Boolean(
+            Number(building.level || 1) >= 5 || villageDesignState.isLoading
+          );
+          actionUpgrade.title = actionUpgrade.disabled
+            ? "Maximum level reached"
+            : "Upgrade building";
+        }
+        if (actionDemolish) {
+          actionDemolish.hidden = false;
+          actionDemolish.dataset.x = String(cell.x);
+          actionDemolish.dataset.y = String(cell.y);
+          actionDemolish.disabled = Boolean(villageDesignState.isLoading);
+        }
+      } else {
+        if (detailIcon) {
+          detailIcon.textContent = cell.terrain.icon || "⬜";
+        }
+        if (detailName) {
+          detailName.textContent = `${cell.terrain.label} tile`;
+        }
+        if (detailMeta) {
+          detailMeta.textContent = `(${cell.x + 1}, ${cell.y + 1})`;
+        }
+        if (detailDescription) {
+          detailDescription.textContent = cell.terrain.description || "";
+        }
+        if (detailProduction) {
+          detailProduction.textContent = "Empty tile";
+        }
+        if (detailInputs) {
+          detailInputs.textContent = "None";
+        }
+        if (detailEfficiency) {
+          detailEfficiency.textContent = formatEfficiencyMultiplier(cell.efficiency);
+        }
+        if (detailTransport) {
+          detailTransport.textContent = formatTransportBonus(cell.transport_bonus);
+        }
+        if (detailWorkers) {
+          detailWorkers.textContent = "—";
+        }
+        if (detailNotes) {
+          detailNotes.innerHTML = "";
+          const notes = Array.isArray(cell.notes) && cell.notes.length
+            ? cell.notes
+            : ["Ready for construction"];
+          notes.forEach((entry) => {
+            const item = document.createElement("li");
+            item.textContent = entry;
+            detailNotes.appendChild(item);
+          });
+        }
+        if (actionUpgrade) {
+          actionUpgrade.hidden = true;
+        }
+        if (actionDemolish) {
+          actionDemolish.hidden = true;
         }
       }
-      if (demolishButton) {
-        demolishButton.hidden = false;
-        demolishButton.dataset.x = String(cell.x);
-        demolishButton.dataset.y = String(cell.y);
-        demolishButton.disabled = false;
-      }
-    } else {
-      if (detailIcon) {
-        detailIcon.textContent = cell.terrain.icon || "⬜";
-      }
-      if (detailName) {
-        detailName.textContent = `${cell.terrain.label} tile`;
-      }
-      if (detailMeta) {
-        detailMeta.textContent = `(${cell.x + 1}, ${cell.y + 1})`;
-      }
-      if (detailDescription) {
-        detailDescription.textContent = cell.terrain.description || "";
-      }
-      if (detailProduction) {
-        detailProduction.textContent = "Empty tile";
-      }
-      if (detailEfficiency) {
-        detailEfficiency.textContent = formatEfficiencyMultiplier(cell.efficiency);
-      }
-      if (detailTransport) {
-        detailTransport.textContent = formatTransportBonus(cell.transport_bonus);
-      }
-      if (detailNotes) {
-        detailNotes.innerHTML = "";
-        const notes = Array.isArray(cell.notes) && cell.notes.length
-          ? cell.notes
-          : ["Ready for construction"];
-        notes.forEach((entry) => {
-          const item = document.createElement("li");
-          item.textContent = entry;
-          detailNotes.appendChild(item);
-        });
-      }
-      if (demolishButton) {
-        demolishButton.hidden = true;
-      }
     }
-  }
 
-  function renderVillageBuildMenu() {
-    if (!villageDesignElements || !villageDesignElements.buildList) {
-      return;
-    }
-    const list = villageDesignElements.buildList;
-    list.innerHTML = "";
-    const orderedCategories = Array.from(villageDesignState.catalog.keys());
-    orderedCategories.sort((a, b) => {
-      const order = Object.keys(VILLAGE_CATEGORY_LABELS);
-      const ai = order.indexOf(a);
-      const bi = order.indexOf(b);
-      if (ai === -1 && bi === -1) {
-        return a.localeCompare(b);
-      }
-      if (ai === -1) {
-        return 1;
-      }
-      if (bi === -1) {
-        return -1;
-      }
-      return ai - bi;
-    });
-    orderedCategories.forEach((category) => {
-      const definitions = villageDesignState.catalog.get(category);
-      if (!definitions || !definitions.length) {
+    function handleVillageGridClick(event) {
+      if (!villageDesignElements || villageDesignState.isLoading) {
         return;
       }
-      const section = document.createElement("section");
-      section.className = "village-build-category";
-      const title = document.createElement("h4");
-      title.className = "village-build-category__title";
-      title.textContent = getVillageCategoryLabel(category);
-      section.appendChild(title);
-      const options = document.createElement("div");
-      options.className = "village-build-options";
-      definitions.forEach((definition) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "village-build-option";
-        button.dataset.buildingId = definition.id;
-        button.dataset.category = definition.category || category;
-        button.title = `${definition.name || formatResourceKey(definition.id)} — ${
-          getVillageCategoryLabel(definition.category || category)
-        }`;
-        if (definition.color) {
-          button.style.setProperty("--building-color", definition.color);
-        } else {
-          button.style.removeProperty("--building-color");
+      const actionButton = event.target.closest("[data-village-action]");
+      if (actionButton) {
+        event.preventDefault();
+        const action = actionButton.dataset.villageAction;
+        const x = Number(actionButton.dataset.x);
+        const y = Number(actionButton.dataset.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          return;
         }
-        const icon = document.createElement("span");
-        icon.className = "village-build-option__icon";
-        icon.textContent = definition.icon || "🏗️";
-        const name = document.createElement("span");
-        name.className = "village-build-option__title";
-        name.textContent = definition.name || formatResourceKey(definition.id);
-        const description = document.createElement("p");
-        description.className = "village-build-option__description";
-        description.textContent = definition.description || "";
-        const costLine = document.createElement("p");
-        costLine.className = "village-build-option__cost";
-        const costEntries = Object.entries(definition.cost || {}).filter(([, amount]) => {
-          const numeric = Number(amount);
-          return Number.isFinite(numeric) && numeric > 0;
-        });
-        costLine.textContent = costEntries.length
-          ? costEntries
-              .map(
-                ([resource, amount]) =>
-                  `${formatAmount(amount)} ${formatResourceKey(resource)}`
-              )
-              .join(" • ")
-          : "No cost";
-        button.append(icon, name, description, costLine);
-        options.appendChild(button);
-      });
-      section.appendChild(options);
-      list.appendChild(section);
-    });
-  }
-
-  function closeVillageBuildMenu() {
-    if (!villageDesignElements || !villageDesignElements.buildMenu) {
-      return;
-    }
-    villageDesignElements.buildMenu.hidden = true;
-    if (villageDesignElements.buildPanel) {
-      villageDesignElements.buildPanel.style.top = "";
-      villageDesignElements.buildPanel.style.left = "50%";
-    }
-    villageDesignState.buildMenuTarget = null;
-    villageDesignState.buildMenuCoordinates = null;
-  }
-
-  function openVillageBuildMenu(target, cell) {
-    if (!villageDesignElements || !villageDesignElements.buildMenu) {
-      return;
-    }
-    renderVillageBuildMenu();
-    villageDesignState.buildMenuTarget = target;
-    villageDesignState.buildMenuCoordinates = { x: cell.x, y: cell.y };
-    const { buildMenu, buildPanel, gridWrapper } = villageDesignElements;
-    buildMenu.hidden = false;
-    if (!buildPanel || !gridWrapper) {
-      return;
-    }
-    window.requestAnimationFrame(() => {
-      const targetRect = target.getBoundingClientRect();
-      const wrapperRect = gridWrapper.getBoundingClientRect();
-      const panelRect = buildPanel.getBoundingClientRect();
-      const preferredLeft = targetRect.left - wrapperRect.left + targetRect.width / 2;
-      let preferredTop = targetRect.bottom - wrapperRect.top + 12;
-      if (preferredTop + panelRect.height > gridWrapper.clientHeight) {
-        preferredTop = Math.max(
-          0,
-          targetRect.top - wrapperRect.top - panelRect.height - 12
-        );
+        if (action === "upgrade") {
+          upgradeVillageStructure(x, y);
+        } else if (action === "demolish") {
+          demolishVillageStructure(x, y);
+        }
+        return;
       }
-      buildPanel.style.left = `${preferredLeft}px`;
-      buildPanel.style.top = `${preferredTop}px`;
-    });
-  }
-
-  function handleVillageGridClick(event) {
-    if (!villageDesignElements || villageDesignState.isLoading) {
-      return;
-    }
-    const cellElement = event.target.closest(".village-grid__cell");
-    if (!cellElement || event.button === 2) {
-      return;
-    }
-    const x = Number(cellElement.dataset.x);
-    const y = Number(cellElement.dataset.y);
+      const cellElement = event.target.closest(".village-grid__cell");
+      if (!cellElement || event.button === 2) {
+        return;
+      }
+      const x = Number(cellElement.dataset.x);
+      const y = Number(cellElement.dataset.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) {
       return;
     }
-    const cell = getVillageCell(villageDesignState.snapshot, x, y);
-    if (!cell) {
-      return;
+      const cell = getVillageCell(villageDesignState.snapshot, x, y);
+      if (!cell) {
+        return;
+      }
+      const key = getVillageCellKey(x, y);
+      villageDesignState.selected = key;
+      highlightVillageSelection();
+      updateVillageSidebar(cell);
+      if (!cell.building && villageDesignState.blueprint) {
+        buildVillageStructure(x, y, villageDesignState.blueprint);
+      }
     }
-    const key = getVillageCellKey(x, y);
-    villageDesignState.selected = key;
-    highlightVillageSelection();
-    updateVillageSidebar(cell);
-    if (cell.building) {
-      closeVillageBuildMenu();
-    } else {
-      openVillageBuildMenu(cellElement, cell);
-    }
-  }
 
   function handleVillageGridHover(event) {
     const cellElement = event.target.closest(".village-grid__cell");
@@ -2315,56 +2839,79 @@
     updateVillageSidebar();
   }
 
-  async function handleVillageBuild(buildingId) {
-    if (!buildingId || !villageDesignState.buildMenuCoordinates) {
-      return;
-    }
-    const { x, y } = villageDesignState.buildMenuCoordinates;
-    try {
-      setVillageLoading(true);
-      clearVillageStatus();
-      const response = await fetch("/api/village/build", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ x, y, building: buildingId }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.ok) {
-        const message = data.error_message || data.error || "Failed to build";
-        throw new Error(message);
+    async function buildVillageStructure(x, y, buildingId) {
+      if (!buildingId || !Number.isFinite(x) || !Number.isFinite(y)) {
+        return;
       }
-      const key = getVillageCellKey(x, y);
-      applyVillageSnapshot(data.village, { selectedKey: key });
-      updateVillageStatus(
-        `Constructed ${getVillageCell(data.village, x, y)?.building?.name || "building"}.`,
-        "success"
-      );
-      highlightVillageSelection();
-      updateVillageSidebar();
-    } catch (error) {
-      updateVillageStatus(error.message || "Failed to construct building", "error");
-      console.error("[Idle Village] build error", error);
-    } finally {
-      setVillageLoading(false);
-      closeVillageBuildMenu();
+      try {
+        setVillageLoading(true);
+        clearVillageStatus();
+        const response = await fetch("/api/village/build", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ x, y, building: buildingId }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          const message = data.error_message || data.error || "Failed to build";
+          throw new Error(message);
+        }
+        const key = getVillageCellKey(x, y);
+        villageDesignState.lastBuilt = key;
+        applyVillageSnapshot(data.village, { selectedKey: key });
+        updateVillageStatus(
+          `Constructed ${getVillageCell(data.village, x, y)?.building?.name || "building"}.`,
+          "success"
+        );
+        highlightVillageSelection();
+        updateVillageSidebar();
+      } catch (error) {
+        updateVillageStatus(error.message || "Failed to construct building", "error");
+        console.error("[Idle Village] build error", error);
+      } finally {
+        setVillageLoading(false);
+      }
     }
-  }
 
-  async function handleVillageDemolish(event) {
-    const button = event.currentTarget;
-    if (!button || villageDesignState.isLoading) {
-      return;
+    async function upgradeVillageStructure(x, y) {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return;
+      }
+      try {
+        setVillageLoading(true);
+        clearVillageStatus();
+        const response = await fetch("/api/village/upgrade", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ x, y }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+          const message = data.error_message || data.error || "Upgrade failed";
+          throw new Error(message);
+        }
+        const key = getVillageCellKey(x, y);
+        applyVillageSnapshot(data.village, { selectedKey: key });
+        updateVillageStatus("Building upgraded", "success");
+        highlightVillageSelection();
+        updateVillageSidebar();
+      } catch (error) {
+        updateVillageStatus(error.message || "Failed to upgrade", "error");
+        console.error("[Idle Village] upgrade error", error);
+      } finally {
+        setVillageLoading(false);
+      }
     }
-    const x = Number(button.dataset.x);
-    const y = Number(button.dataset.y);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      return;
-    }
-    try {
-      setVillageLoading(true);
-      clearVillageStatus();
-      const response = await fetch("/api/village/demolish", {
-        method: "POST",
+
+    async function demolishVillageStructure(x, y) {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return;
+      }
+      try {
+        setVillageLoading(true);
+        clearVillageStatus();
+        const response = await fetch("/api/village/demolish", {
+          method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ x, y }),
       });
@@ -2372,52 +2919,82 @@
       if (!response.ok || !data.ok) {
         const message = data.error_message || data.error || "Demolition failed";
         throw new Error(message);
+        }
+        const key = getVillageCellKey(x, y);
+        applyVillageSnapshot(data.village, { selectedKey: key });
+        updateVillageStatus("Building demolished", "success");
+        highlightVillageSelection();
+        updateVillageSidebar();
+      } catch (error) {
+        updateVillageStatus(error.message || "Failed to demolish", "error");
+        console.error("[Idle Village] demolish error", error);
+      } finally {
+        setVillageLoading(false);
       }
-      const key = getVillageCellKey(x, y);
-      applyVillageSnapshot(data.village, { selectedKey: key });
-      updateVillageStatus("Building demolished", "success");
-      highlightVillageSelection();
-      updateVillageSidebar();
-    } catch (error) {
-      updateVillageStatus(error.message || "Failed to demolish", "error");
-      console.error("[Idle Village] demolish error", error);
-    } finally {
-      setVillageLoading(false);
-      closeVillageBuildMenu();
     }
-  }
 
-  function handleVillageBuildListClick(event) {
-    const option = event.target.closest("[data-building-id]");
-    if (!option || villageDesignState.isLoading) {
-      return;
+    async function handleVillageDemolish(event) {
+      const button = event?.currentTarget;
+      if (!button || villageDesignState.isLoading) {
+        return;
+      }
+      const x = Number(button.dataset.x);
+      const y = Number(button.dataset.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return;
+      }
+      event.preventDefault();
+      await demolishVillageStructure(x, y);
     }
-    handleVillageBuild(option.dataset.buildingId);
-  }
 
-  function handleVillageDocumentClick(event) {
-    if (!villageDesignElements || !villageDesignElements.buildMenu) {
-      return;
+    async function handleVillageUpgrade(event) {
+      const button = event?.currentTarget;
+      if (!button || villageDesignState.isLoading) {
+        return;
+      }
+      const x = Number(button.dataset.x);
+      const y = Number(button.dataset.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return;
+      }
+      event.preventDefault();
+      await upgradeVillageStructure(x, y);
     }
-    if (villageDesignElements.buildMenu.hidden) {
-      return;
-    }
-    if (
-      event.target.closest("[data-village-build-menu]") ||
-      (villageDesignState.buildMenuTarget &&
-        event.target.closest(".village-grid__cell") ===
-          villageDesignState.buildMenuTarget)
-    ) {
-      return;
-    }
-    closeVillageBuildMenu();
-  }
 
-  function handleVillageKeydown(event) {
-    if (event.key === "Escape") {
-      closeVillageBuildMenu();
+    function handleVillageCatalogClick(event) {
+      if (villageDesignState.isLoading) {
+        return;
+      }
+      const action = event.target.closest("[data-blueprint-id]");
+      if (!action) {
+        return;
+      }
+      event.preventDefault();
+      const blueprintId = action.dataset.blueprintId;
+      if (blueprintId) {
+        selectBlueprint(blueprintId);
+      }
     }
-  }
+
+    function handleBlueprintCancel(event) {
+      if (event) {
+        event.preventDefault();
+      }
+      clearBlueprint();
+    }
+
+    function handleVillageViewTabClick(event) {
+      const tab = event?.currentTarget;
+      if (!tab) {
+        return;
+      }
+      const view = tab.dataset.villageViewTab;
+      if (!view) {
+        return;
+      }
+      event.preventDefault();
+      switchVillageView(view);
+    }
 
   async function handleVillageSave() {
     if (!villageDesignElements) {
@@ -2460,7 +3037,6 @@
       console.error("[Idle Village] load design error", error);
     } finally {
       setVillageLoading(false);
-      closeVillageBuildMenu();
     }
   }
 
@@ -7341,20 +7917,31 @@ function handleVillageDragEnd(event) {
         handleVillageGridLeave
       );
     }
-    if (villageDesignElements.buildList) {
-      villageDesignElements.buildList.addEventListener(
+    if (villageDesignElements.buildingList) {
+      villageDesignElements.buildingList.addEventListener(
         "click",
-        handleVillageBuildListClick
+        handleVillageCatalogClick
       );
     }
-    if (villageDesignElements.buildClose) {
-      villageDesignElements.buildClose.addEventListener(
+    if (Array.isArray(villageDesignElements.viewTabs)) {
+      villageDesignElements.viewTabs.forEach((tab) => {
+        tab.addEventListener("click", handleVillageViewTabClick);
+      });
+    }
+    if (villageDesignElements.blueprintCancel) {
+      villageDesignElements.blueprintCancel.addEventListener(
         "click",
-        closeVillageBuildMenu
+        handleBlueprintCancel
       );
     }
-    if (villageDesignElements.demolishButton) {
-      villageDesignElements.demolishButton.addEventListener(
+    if (villageDesignElements.actionUpgrade) {
+      villageDesignElements.actionUpgrade.addEventListener(
+        "click",
+        handleVillageUpgrade
+      );
+    }
+    if (villageDesignElements.actionDemolish) {
+      villageDesignElements.actionDemolish.addEventListener(
         "click",
         handleVillageDemolish
       );
@@ -7371,8 +7958,6 @@ function handleVillageDragEnd(event) {
         handleVillageLoad
       );
     }
-    document.addEventListener("click", handleVillageDocumentClick);
-    document.addEventListener("keydown", handleVillageKeydown);
   }
 
   villageModeButtons.forEach((button) => {
