@@ -59,7 +59,6 @@ class GameState:
         self.max_workers_woodcutter: int = 0
         self.wood_max_capacity: float = 0.0
         self.wood_production_per_second: float = 0.0
-        self.village_sandbox: bool = True
         self._initialise_state()
 
     # ------------------------------------------------------------------
@@ -107,7 +106,6 @@ class GameState:
             Building.reset_ids()
             self.trade_manager = TradeManager(config.TRADE_DEFAULTS)
             self.village_design = VillageDesignState()
-            self.village_sandbox = True
             self._initialise_inventory()
             self.resources["gold"] = self.inventory.get_amount(Resource.GOLD)
             self.last_production_reports = {}
@@ -1046,17 +1044,17 @@ class GameState:
 
         reservation = None
         with self._lock:
-            if not self.village_sandbox and requirements:
+            if requirements:
                 reservation = self.inventory.reserve(requirements)
                 if reservation is None:
                     raise InsufficientResourcesError(requirements)
             try:
                 _, effects = self.village_design.place_building(ix, iy, building_key)
             except Exception as exc:
-                if reservation is not None and not self.village_sandbox:
+                if reservation is not None:
                     self.inventory.rollback(reservation)
                 raise
-            if reservation is not None and not self.village_sandbox:
+            if reservation is not None:
                 self.inventory.commit(reservation)
             self._apply_village_effects(effects)
             self._state_version += 1
@@ -1091,19 +1089,6 @@ class GameState:
                 for resource, amount in refund.items()
             }
         return snapshot
-
-    def upgrade_village_structure(self, x: int, y: int) -> Dict[str, object]:
-        try:
-            ix = int(x)
-            iy = int(y)
-        except (TypeError, ValueError):
-            raise VillagePlacementError("Invalid coordinates")
-
-        with self._lock:
-            _, effects = self.village_design.upgrade_building(ix, iy)
-            self._apply_village_effects(effects)
-            self._state_version += 1
-        return self.snapshot_village_design()
 
     def save_village_design(self, path: Optional[str] = None) -> str:
         target = Path(path) if path else VILLAGE_DEFAULT_SAVE

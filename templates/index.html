@@ -361,46 +361,20 @@
       hidden
     >
       <section class="panel panel--village">
-        <div class="village-toolbar">
-          <div class="village-toolbar__info">
-            <h2 class="panel-title">Village planner</h2>
+        <div class="panel-header panel-header--village">
+          <div class="panel-header__title-group">
+            <h2 class="panel-title">Village design</h2>
             <p class="panel-subtitle">
-              Lay out production chains on the 10×10 board, balance logistics and keep
-              houses close to support. Distance matters – efficient routes keep the
-              village thriving.
+              Place buildings on the 5×5 grid to shape your settlement. Bonuses
+              are applied automatically based on terrain and adjacency.
             </p>
-            <div class="village-blueprint" data-village-blueprint hidden>
-              <span class="village-blueprint__icon" data-village-blueprint-icon>🏗️</span>
-              <div>
-                <p class="village-blueprint__label" data-village-blueprint-label>
-                  Blueprint ready
-                </p>
-                <button
-                  type="button"
-                  class="village-blueprint__cancel"
-                  data-village-blueprint-clear
-                >
-                  Cancel blueprint
-                </button>
-              </div>
-            </div>
           </div>
-          <div class="village-toolbar__resources" aria-live="polite">
-            <div class="village-resource-bar">
-              <div class="village-resource-chip" data-village-resource-chip>
-                <span class="village-resource-chip__icon">🪙</span>
-                <span class="village-resource-chip__label">Gold</span>
-                <span class="village-resource-chip__value" data-village-resource="gold">0</span>
-              </div>
+          <div class="village-header-controls">
+            <div class="village-resource-bar" aria-live="polite">
               <div class="village-resource-chip" data-village-resource-chip>
                 <span class="village-resource-chip__icon">🪵</span>
                 <span class="village-resource-chip__label">Wood</span>
                 <span class="village-resource-chip__value" data-village-resource="wood">0</span>
-              </div>
-              <div class="village-resource-chip" data-village-resource-chip>
-                <span class="village-resource-chip__icon">🧱</span>
-                <span class="village-resource-chip__label">Planks</span>
-                <span class="village-resource-chip__value" data-village-resource="planks">0</span>
               </div>
               <div class="village-resource-chip" data-village-resource-chip>
                 <span class="village-resource-chip__icon">🪨</span>
@@ -408,14 +382,14 @@
                 <span class="village-resource-chip__value" data-village-resource="stone">0</span>
               </div>
               <div class="village-resource-chip" data-village-resource-chip>
-                <span class="village-resource-chip__icon">🥢</span>
-                <span class="village-resource-chip__label">Sticks</span>
-                <span class="village-resource-chip__value" data-village-resource="sticks">0</span>
+                <span class="village-resource-chip__icon">🍖</span>
+                <span class="village-resource-chip__label">Food</span>
+                <span class="village-resource-chip__value" data-village-resource="food">0</span>
               </div>
               <div class="village-resource-chip" data-village-resource-chip>
-                <span class="village-resource-chip__icon">🛠️</span>
-                <span class="village-resource-chip__label">Tools</span>
-                <span class="village-resource-chip__value" data-village-resource="tools">0</span>
+                <span class="village-resource-chip__icon">🪙</span>
+                <span class="village-resource-chip__label">Gold</span>
+                <span class="village-resource-chip__value" data-village-resource="gold">0</span>
               </div>
               <div class="village-resource-chip" data-village-resource-chip>
                 <span class="village-resource-chip__icon">👥</span>
@@ -423,175 +397,92 @@
                 <span class="village-resource-chip__value" data-village-resource="villagers">0/0</span>
               </div>
             </div>
-          </div>
-          <div class="village-toolbar__actions">
-            <button type="button" class="village-header-button" data-village-save>
-              Save design
-            </button>
-            <button type="button" class="village-header-button" data-village-load>
-              Load design
-            </button>
+            <div class="village-header-actions">
+              <button
+                type="button"
+                class="village-header-button"
+                data-village-save
+              >
+                Save design
+              </button>
+              <button
+                type="button"
+                class="village-header-button"
+                data-village-load
+              >
+                Load design
+              </button>
+            </div>
           </div>
         </div>
         <div class="village-status" data-village-status role="status" aria-live="polite"></div>
-        <div class="village-views">
-          <div class="village-views__tabs" role="tablist" aria-label="Village views">
-            <button
-              id="village-tab-buildings"
-              class="village-view-tab is-active"
-              type="button"
-              role="tab"
-              aria-selected="true"
-              data-village-view-tab="buildings"
-              aria-controls="village-view-buildings"
-            >
-              Buildings
-            </button>
-            <button
-              id="village-tab-map"
-              class="village-view-tab"
-              type="button"
-              role="tab"
-              aria-selected="false"
-              data-village-view-tab="map"
-              aria-controls="village-view-map"
-            >
-              Village map
-            </button>
-            <button
-              id="village-tab-flow"
-              class="village-view-tab"
-              type="button"
-              role="tab"
-              aria-selected="false"
-              data-village-view-tab="flow"
-              aria-controls="village-view-flow"
-            >
-              Resource flow
-            </button>
-          </div>
-          <div class="village-views__panels">
-            <section
-              id="village-view-buildings"
-              class="village-view-panel is-active"
-              data-village-view-panel="buildings"
-              role="tabpanel"
-              aria-labelledby="village-tab-buildings"
-            >
-              <div class="village-catalog" data-village-building-list></div>
-              <p class="village-catalog__empty" data-village-catalog-empty hidden>
-                Catalog unavailable right now.
-              </p>
-            </section>
-            <section
-              id="village-view-map"
-              class="village-view-panel"
-              data-village-view-panel="map"
-              role="tabpanel"
-              aria-labelledby="village-tab-map"
-              hidden
-            >
-              <div class="village-map-layout">
-                <div class="village-map-board">
-                  <div id="village-map" class="village-map">
-                    <div class="village-grid-wrapper">
-                      <div
-                        id="village-grid"
-                        class="village-grid"
-                        role="grid"
-                        aria-label="Village terrain"
-                        data-village-grid
-                      ></div>
-                    </div>
-                    <svg id="village-overlay" class="village-overlay" aria-hidden="true"></svg>
-                  </div>
-                </div>
-                <aside class="supply-panel" data-village-sidebar aria-live="polite">
-                  <div class="supply-panel__detail" data-village-detail>
-                    <div class="supply-panel__placeholder" data-village-sidebar-empty>
-                      Select a tile to inspect terrain bonuses or manage a building.
-                    </div>
-                    <div class="supply-panel__content" data-village-sidebar-content hidden>
-                      <header class="supply-panel__header">
-                        <span class="supply-panel__icon" data-village-detail-icon>🏡</span>
-                        <div>
-                          <h3 class="supply-panel__title" data-village-detail-name>Structure</h3>
-                          <p class="supply-panel__meta" data-village-detail-meta></p>
-                        </div>
-                      </header>
-                      <p class="supply-panel__description" data-village-detail-description></p>
-                      <dl class="supply-panel__stats">
-                        <div>
-                          <dt>Production</dt>
-                          <dd data-village-detail-production>—</dd>
-                        </div>
-                        <div>
-                          <dt>Inputs</dt>
-                          <dd data-village-detail-inputs>—</dd>
-                        </div>
-                        <div>
-                          <dt>Efficiency</dt>
-                          <dd data-village-detail-efficiency>100%</dd>
-                        </div>
-                        <div>
-                          <dt>Transport</dt>
-                          <dd data-village-detail-transport>+0%</dd>
-                        </div>
-                        <div>
-                          <dt>Workers</dt>
-                          <dd data-village-detail-workers>0</dd>
-                        </div>
-                      </dl>
-                      <ul class="supply-panel__notes" data-village-detail-notes></ul>
-                      <div class="supply-panel__actions">
-                        <button
-                          type="button"
-                          class="village-action-button"
-                          data-village-action="upgrade"
-                        >
-                          Upgrade
-                        </button>
-                        <button
-                          type="button"
-                          class="village-action-button village-action-button--danger"
-                          data-village-action="demolish"
-                        >
-                          Demolish
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="supply-panel__chains">
-                    <h3 class="supply-panel__heading">Supply status</h3>
-                    <ul class="supply-status-list" data-supply-status-list></ul>
-                    <div class="supply-panel__totals">
-                      <div>
-                        <span class="supply-panel__totals-label">Production/min</span>
-                        <ul class="supply-panel__totals-list" data-supply-total-production></ul>
-                      </div>
-                      <div>
-                        <span class="supply-panel__totals-label">Consumption/min</span>
-                        <ul class="supply-panel__totals-list" data-supply-total-consumption></ul>
-                      </div>
-                    </div>
-                  </div>
-                </aside>
+        <div class="village-design">
+          <div class="village-grid-wrapper">
+            <div
+              class="village-grid"
+              role="grid"
+              aria-label="Village terrain"
+              data-village-grid
+            ></div>
+            <div class="village-build-menu" data-village-build-menu hidden>
+              <div class="village-build-menu__panel">
+                <header class="village-build-menu__header">
+                  <h3 class="village-build-menu__title">Construct building</h3>
+                  <button
+                    type="button"
+                    class="village-build-menu__close"
+                    data-village-build-close
+                    aria-label="Close build menu"
+                  >
+                    ×
+                  </button>
+                </header>
+                <div
+                  class="village-build-menu__body"
+                  data-village-build-list
+                ></div>
               </div>
-            </section>
-            <section
-              id="village-view-flow"
-              class="village-view-panel"
-              data-village-view-panel="flow"
-              role="tabpanel"
-              aria-labelledby="village-tab-flow"
-              hidden
-            >
-              <div class="resource-flow" data-resource-flow></div>
-              <p class="resource-flow__empty" data-resource-flow-empty hidden>
-                Build production chains to visualise their routes.
-              </p>
-            </section>
+            </div>
           </div>
+          <aside class="village-sidebar" data-village-sidebar aria-live="polite">
+            <div class="village-sidebar__placeholder" data-village-sidebar-empty>
+              Select a cell to inspect terrain bonuses or manage a building.
+            </div>
+            <div class="village-sidebar__content" data-village-sidebar-content hidden>
+              <header class="village-sidebar__header">
+                <span class="village-sidebar__icon" data-village-detail-icon>🏡</span>
+                <div>
+                  <h3 class="village-sidebar__title" data-village-detail-name>
+                    Structure
+                  </h3>
+                  <p class="village-sidebar__meta" data-village-detail-meta></p>
+                </div>
+              </header>
+              <p class="village-sidebar__description" data-village-detail-description></p>
+              <dl class="village-sidebar__stats">
+                <div class="village-sidebar__stat">
+                  <dt>Production</dt>
+                  <dd data-village-detail-production>—</dd>
+                </div>
+                <div class="village-sidebar__stat">
+                  <dt>Efficiency</dt>
+                  <dd data-village-detail-efficiency>100%</dd>
+                </div>
+                <div class="village-sidebar__stat">
+                  <dt>Transport</dt>
+                  <dd data-village-detail-transport>+0%</dd>
+                </div>
+              </dl>
+              <ul class="village-sidebar__notes" data-village-detail-notes></ul>
+              <button
+                type="button"
+                class="village-sidebar__demolish"
+                data-village-demolish
+              >
+                Demolish building
+              </button>
+            </div>
+          </aside>
         </div>
       </section>
     </section>
