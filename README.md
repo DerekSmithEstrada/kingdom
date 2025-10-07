@@ -36,7 +36,6 @@ Abrí <http://127.0.0.1:5000> en tu navegador para ver el panel.
 - **Puente `api/ui_bridge`**: expone operaciones de tick, construcción, comercio y asignación de trabajadores listas para reutilizarse desde la UI o rutas HTTP.
 - **Persistencia simple**: `core.persistence` ofrece guardado y carga en disco, integrados en el puente para facilitar su consumo desde la interfaz.
 - **Frontend ligero**: Flask sirve la plantilla principal con Tailwind por CDN y JavaScript sin dependencias que invoca las acciones anteriores.
-- **Árbol de producción en vivo**: pestaña dedicada que consume `/api/production_tree` para visualizar cadenas de insumo→producto con filtros interactivos.
 
 ## Limitaciones
 

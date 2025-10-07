@@ -312,67 +312,11 @@
       data-view-panel="production"
       hidden
     >
-      <section class="panel panel--production-tree" data-production-tree-panel>
+      <section class="panel">
         <div class="panel-header">
           <h2 class="panel-title">Production tree</h2>
-          <div class="panel-status" data-production-tree-status aria-live="polite"></div>
         </div>
-        <div class="production-tree">
-          <div class="production-tree__controls">
-            <div class="production-tree__filter-row">
-              <div class="production-tree__segmented" role="group" aria-label="Filtro de descubrimiento">
-                <button
-                  type="button"
-                  class="production-tree__segmented-btn is-active"
-                  data-production-tree-filter="discovered"
-                >
-                  Sólo descubiertos
-                </button>
-                <button
-                  type="button"
-                  class="production-tree__segmented-btn"
-                  data-production-tree-filter="all"
-                >
-                  Todos los recursos
-                </button>
-              </div>
-              <label class="production-tree__toggle">
-                <input type="checkbox" data-production-tree-active />
-                <span>Mostrar solo cadenas activas</span>
-              </label>
-            </div>
-            <div class="production-tree__filter-row">
-              <label class="production-tree__search">
-                <span class="sr-only">Buscar recurso o edificio</span>
-                <input
-                  type="search"
-                  placeholder="Buscar recurso o edificio"
-                  data-production-tree-search
-                  autocomplete="off"
-                />
-              </label>
-            </div>
-            <div
-              class="production-tree__categories"
-              data-production-tree-categories
-              aria-label="Categorías"
-              role="group"
-            ></div>
-          </div>
-          <div class="production-tree__content" data-production-tree-root>
-            <div class="production-tree__empty" data-production-tree-empty hidden>
-              No hay cadenas para mostrar. Ajustá los filtros o construí edificios para comenzar la producción.
-            </div>
-            <div class="production-tree__empty" data-production-tree-empty-discovered hidden>
-              Aún no hay cadenas activas. Construí tu primer edificio para ver el flujo de producción.
-            </div>
-            <div class="production-tree__empty" data-production-tree-empty-config hidden>
-              No se encontraron recetas configuradas. Revisá la documentación interna para definir nuevas recipes.
-            </div>
-            <div class="production-tree__grid" data-production-tree-grid></div>
-            <div class="production-tree__edges" data-production-tree-edges></div>
-          </div>
-        </div>
+        <p class="placeholder-text">Production tree view coming soon.</p>
       </section>
     </section>
 
