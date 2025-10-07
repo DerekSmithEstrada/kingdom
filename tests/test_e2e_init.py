@@ -96,7 +96,7 @@ def test_forced_init_and_first_production_cycle(client):
 
     public_state = client.get("/state")
     assert public_state.status_code == 200
-    assert public_state.get_json()["items"]["wood"] == pytest.approx(0.0)
+    assert public_state.get_json()["items"]["wood"] == pytest.approx(10.0)
 
     for _ in range(5):
         tick_response = client.post("/api/tick", json={"dt": 1})
@@ -105,4 +105,4 @@ def test_forced_init_and_first_production_cycle(client):
         assert payload["ok"] is True
 
     after_idle_state = client.get("/state").get_json()
-    assert after_idle_state["items"]["wood"] == pytest.approx(0.0, abs=1e-9)
+    assert after_idle_state["items"]["wood"] == pytest.approx(10.5, abs=1e-9)

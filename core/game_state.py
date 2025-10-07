@@ -324,6 +324,13 @@ class GameState:
         self.season_clock.update(seconds)
         self._sync_season_state()
 
+        if config.TEST_PASSIVE_TICK and seconds > 0:
+            passive_gain = 0.1 * seconds
+            if passive_gain > 0:
+                additions = {resource: passive_gain for resource in ALL_RESOURCES}
+                self.inventory.add(additions)
+                self.resources["gold"] = self.inventory.get_amount(Resource.GOLD)
+
         self.trade_manager.tick(seconds, self.inventory, self.add_notification)
 
         self.last_production_reports = {}

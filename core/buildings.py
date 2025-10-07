@@ -1,12 +1,17 @@
 """Building logic and production handling."""
 from __future__ import annotations
 
+import logging
+from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, Mapping, Optional, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 from . import config
 from .inventory import Inventory
-from .resources import Resource
+from .resources import ALL_RESOURCES, Resource
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -624,3 +629,210 @@ def build_from_config(type_key: str) -> Building:
         role=metadata.role,
         level=metadata.level or 1,
     )
+
+
+# ---------------------------------------------------------------------------
+# Tier zero resource extractor support
+
+_DEFAULT_TIER_ZERO_RATE = 0.1
+_DEFAULT_TIER_ZERO_MAX_WORKERS = 5
+_DEFAULT_TIER_ZERO_CAPACITY = 100.0
+
+_BASE_TIER_ZERO_BUILDINGS: Dict[Resource, str] = {
+    Resource.STONE: getattr(config, "QUARRY", "quarry"),
+    Resource.STICKS: getattr(config, "STICK_GATHERER", "stick_gatherer"),
+    Resource.GOLD: getattr(config, "GOLD_PANNER", "gold_panner"),
+}
+
+_BASIC_EXTRACTORS_INITIALISED = False
+
+
+def _recipe_outputs(recipe: config.BuildingRecipe) -> Set[Resource]:
+    outputs: Set[Resource] = set()
+    outputs.update(resource for resource, amount in recipe.outputs.items() if amount > 0)
+    if recipe.per_worker_output_rate:
+        outputs.update(
+            resource for resource, amount in recipe.per_worker_output_rate.items() if amount > 0
+        )
+    return outputs
+
+
+def _recipe_inputs(recipe: config.BuildingRecipe) -> Set[Resource]:
+    inputs: Set[Resource] = set()
+    inputs.update(resource for resource, amount in recipe.inputs.items() if amount > 0)
+    if recipe.per_worker_input_rate:
+        inputs.update(
+            resource for resource, amount in recipe.per_worker_input_rate.items() if amount > 0
+        )
+    return inputs
+
+
+def _register_basic_extractor(
+    type_key: str,
+    resource: Resource,
+    *,
+    name: Optional[str] = None,
+    base_rate: float = _DEFAULT_TIER_ZERO_RATE,
+    max_workers: int = _DEFAULT_TIER_ZERO_MAX_WORKERS,
+) -> bool:
+    if type_key in config.BUILDING_RECIPES:
+        return False
+
+    recipe = config.BuildingRecipe(
+        inputs={},
+        outputs={},
+        cycle_time=1.0,
+        max_workers=max_workers,
+        maintenance={},
+        capacity={resource: _DEFAULT_TIER_ZERO_CAPACITY},
+        per_worker_output_rate={resource: base_rate},
+        per_worker_input_rate=None,
+    )
+
+    display_name = name or type_key.replace("_", " ").title()
+
+    config.BUILDING_PUBLIC_IDS[type_key] = type_key
+    config._BUILDING_ID_LOOKUP[type_key] = type_key
+    config.BUILDING_NAMES[type_key] = display_name
+    if type_key not in config.BUILDING_METADATA:
+        config.BUILDING_METADATA[type_key] = config.BuildingMetadata(
+            category="resource",
+            category_label="Resource Extraction",
+            icon="⛏️",
+            build_label=display_name,
+            role="resource_collector",
+            level=1,
+        )
+    config.BUILD_COSTS[type_key] = config.BUILD_COSTS.get(type_key, {})
+    config.BUILDING_RECIPES[type_key] = recipe
+
+    logger.info(
+        "Registrado extractor básico %s para el recurso %s", type_key, resource.value
+    )
+    return True
+
+
+def _ensure_named_base_extractor(resource: Resource, type_key: str) -> str:
+    name = config.BUILDING_NAMES.get(type_key)
+    created = _register_basic_extractor(type_key, resource, name=name)
+    if created:
+        return type_key
+
+    recipe = config.BUILDING_RECIPES.get(type_key)
+    if recipe is None:
+        return type_key
+
+    if _recipe_inputs(recipe):
+        config.BUILDING_RECIPES[type_key] = config.BuildingRecipe(
+            inputs={},
+            outputs={},
+            cycle_time=1.0,
+            max_workers=_DEFAULT_TIER_ZERO_MAX_WORKERS,
+            maintenance={},
+            capacity={resource: _DEFAULT_TIER_ZERO_CAPACITY},
+            per_worker_output_rate={resource: _DEFAULT_TIER_ZERO_RATE},
+            per_worker_input_rate=None,
+        )
+        logger.info(
+            "Se reemplazó la receta de %s para cumplir con el extractor básico de %s",
+            type_key,
+            resource.value,
+        )
+    return type_key
+
+
+def _ensure_generic_extractor(resource: Resource) -> str:
+    resource_key = resource.value.lower()
+    type_key = f"basic_{resource_key}_extractor"
+    display_name = f"Basic {resource.value.replace('_', ' ').title()} Extractor"
+    created = _register_basic_extractor(type_key, resource, name=display_name)
+    if created:
+        logger.info(
+            "Se generó automáticamente el extractor básico %s para %s",
+            type_key,
+            resource.value,
+        )
+    return type_key
+
+
+def _build_dependency_graph() -> Dict[Resource, Set[Resource]]:
+    graph: Dict[Resource, Set[Resource]] = defaultdict(set)
+    for recipe in config.BUILDING_RECIPES.values():
+        outputs = _recipe_outputs(recipe)
+        inputs = _recipe_inputs(recipe)
+        if not outputs or not inputs:
+            continue
+        for input_resource in inputs:
+            graph[input_resource].update(outputs)
+    return graph
+
+
+def _log_dependency_cycles(graph: Mapping[Resource, Set[Resource]]) -> None:
+    visited: Set[Resource] = set()
+    stack: Set[Resource] = set()
+    path: List[Resource] = []
+    reported: Set[Tuple[str, ...]] = set()
+
+    def dfs(node: Resource) -> None:
+        visited.add(node)
+        stack.add(node)
+        path.append(node)
+        for neighbour in graph.get(node, set()):
+            if neighbour not in visited:
+                dfs(neighbour)
+            elif neighbour in stack:
+                try:
+                    start_index = path.index(neighbour)
+                except ValueError:
+                    continue
+                cycle_path = path[start_index:] + [neighbour]
+                key = tuple(res.value for res in cycle_path)
+                if key in reported:
+                    continue
+                reported.add(key)
+                logger.warning(
+                    "Dependencia cíclica detectada: %s",
+                    " -> ".join(res.value for res in cycle_path),
+                )
+        stack.remove(node)
+        path.pop()
+
+    for resource in graph:
+        if resource not in visited:
+            dfs(resource)
+
+
+def ensure_basic_resource_extractors() -> None:
+    global _BASIC_EXTRACTORS_INITIALISED
+    if _BASIC_EXTRACTORS_INITIALISED:
+        return
+
+    producers: Dict[Resource, Set[str]] = defaultdict(set)
+    tier_zero: Dict[Resource, Set[str]] = defaultdict(set)
+
+    for type_key, recipe in list(config.BUILDING_RECIPES.items()):
+        outputs = _recipe_outputs(recipe)
+        inputs = _recipe_inputs(recipe)
+        for resource in outputs:
+            producers[resource].add(type_key)
+            if not inputs:
+                tier_zero[resource].add(type_key)
+
+    for resource, type_key in _BASE_TIER_ZERO_BUILDINGS.items():
+        ensured_key = _ensure_named_base_extractor(resource, type_key)
+        tier_zero.setdefault(resource, set()).add(ensured_key)
+        producers.setdefault(resource, set()).add(ensured_key)
+
+    for resource in ALL_RESOURCES:
+        if not tier_zero.get(resource):
+            generated_key = _ensure_generic_extractor(resource)
+            tier_zero[resource].add(generated_key)
+            producers.setdefault(resource, set()).add(generated_key)
+
+    graph = _build_dependency_graph()
+    _log_dependency_cycles(graph)
+
+    _BASIC_EXTRACTORS_INITIALISED = True
+
+
+ensure_basic_resource_extractors()

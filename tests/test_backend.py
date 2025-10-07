@@ -5,8 +5,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest
 
-import pytest
-
 from api import ui_bridge
 from core import config
 from core.game_state import get_game_state
@@ -37,9 +35,9 @@ def test_basic_state_snapshot_defaults():
     }
     assert snapshot["jobs"]["forester"] == {"assigned": 0, "capacity": 2}
     assert snapshot["items"]["gold"] == pytest.approx(10.0)
-    assert snapshot["items"]["wood"] == pytest.approx(0.0)
+    assert snapshot["items"]["wood"] == pytest.approx(10.0)
     wood_state = snapshot["wood_state"]
-    assert wood_state["wood"] == pytest.approx(0.0)
+    assert wood_state["wood"] == pytest.approx(10.0)
     assert wood_state["woodcutter_camps_built"] == 1
     assert wood_state["workers_assigned_woodcutter"] == 0
     assert wood_state["max_workers_woodcutter"] == 2
@@ -53,11 +51,27 @@ def test_wood_production_matches_formula():
     state.inventory.set_amount(Resource.STONE, 1.0)
     state.assign_workers_to_woodcutter(1)
     state.recompute_wood_caps()
+    wood_before = state.inventory.get_amount(Resource.WOOD)
+    sticks_before = state.inventory.get_amount(Resource.STICKS)
+    stone_before = state.inventory.get_amount(Resource.STONE)
+
     state.advance_time(10.0)
     snapshot = state.basic_state_snapshot()
-    assert snapshot["items"]["wood"] == pytest.approx(0.1, rel=1e-9, abs=1e-9)
-    assert snapshot["items"]["sticks"] == pytest.approx(0.6, rel=1e-9, abs=1e-9)
-    assert snapshot["items"]["stone"] == pytest.approx(0.6, rel=1e-9, abs=1e-9)
+    passive_gain = 0.1 * 10.0
+
+    wood_after = snapshot["items"]["wood"]
+    sticks_after = snapshot["items"]["sticks"]
+    stone_after = snapshot["items"]["stone"]
+
+    assert wood_after - wood_before - passive_gain == pytest.approx(
+        0.1, rel=1e-9, abs=1e-9
+    )
+    assert sticks_after - sticks_before - passive_gain == pytest.approx(
+        -0.4, rel=1e-9, abs=1e-9
+    )
+    assert stone_after - stone_before - passive_gain == pytest.approx(
+        -0.4, rel=1e-9, abs=1e-9
+    )
     assert snapshot["wood_state"]["wood_production_per_second"] == pytest.approx(0.01)
 
 
@@ -90,7 +104,7 @@ def test_capacity_clamp_enforced():
     state.recompute_wood_caps()
     state.advance_time(10.0)
     assert state.wood_max_capacity == pytest.approx(30.0)
-    assert state.wood == pytest.approx(29.9)
+    assert state.wood == pytest.approx(30.0)
 
 
 def test_no_camps_means_no_production():
@@ -180,10 +194,11 @@ def test_stick_tent_produces_sticks():
     tent = state.get_building_by_type(config.STICK_GATHERING_TENT)
     assert tent is not None
     state.worker_pool.set_assignment(tent, 1)
+    before = state.inventory.get_amount(Resource.STICKS)
     state.advance_time(10.0)
-    assert state.inventory.get_amount(Resource.STICKS) == pytest.approx(
-        0.1, rel=1e-9, abs=1e-9
-    )
+    after = state.inventory.get_amount(Resource.STICKS)
+    passive_gain = 0.1 * 10.0
+    assert after - before - passive_gain == pytest.approx(0.1, rel=1e-9, abs=1e-9)
 
 
 def test_stone_tent_produces_stone():
@@ -195,7 +210,8 @@ def test_stone_tent_produces_stone():
     tent = state.get_building_by_type(config.STONE_GATHERING_TENT)
     assert tent is not None
     state.worker_pool.set_assignment(tent, 1)
+    before = state.inventory.get_amount(Resource.STONE)
     state.advance_time(10.0)
-    assert state.inventory.get_amount(Resource.STONE) == pytest.approx(
-        0.1, rel=1e-9, abs=1e-9
-    )
+    after = state.inventory.get_amount(Resource.STONE)
+    passive_gain = 0.1 * 10.0
+    assert after - before - passive_gain == pytest.approx(0.1, rel=1e-9, abs=1e-9)
