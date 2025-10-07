@@ -7,15 +7,23 @@ from typing import Dict, Mapping, Optional, Tuple
 from .resources import ALL_RESOURCES, Resource, normalise_mapping
 
 # ---------------------------------------------------------------------------
+# Feature flags
+
+TEST_PASSIVE_TICK: bool = True
+
+# ---------------------------------------------------------------------------
 # Building identifiers and normalisation helpers
 
 WOODCUTTER_CAMP = "woodcutter_camp"
+STICK_GATHERER = "stick_gatherer"
 STICK_GATHERING_TENT = "stick_gathering_tent"
 STONE_GATHERING_TENT = "stone_gathering_tent"
+QUARRY = "quarry"
 LUMBER_HUT = "lumber_hut"
 MINER = "miner"
 FARMER = "farmer"
 ARTISAN = "artisan"
+GOLD_PANNER = "gold_panner"
 
 LUMBER_CAMP = "lumber_camp"
 FORESTER_CAMP = "forester_camp"
@@ -78,12 +86,15 @@ GARDEN = "garden"
 
 BUILDING_PUBLIC_IDS: Dict[str, str] = {
     WOODCUTTER_CAMP: "woodcutter_camp",
+    STICK_GATHERER: "stick_gatherer",
     STICK_GATHERING_TENT: "stick_gathering_tent",
     STONE_GATHERING_TENT: "stone_gathering_tent",
+    QUARRY: "quarry",
     LUMBER_HUT: "lumber_hut",
     MINER: "miner",
     FARMER: "farmer",
     ARTISAN: "artisan",
+    GOLD_PANNER: "gold_panner",
     LUMBER_CAMP: "lumber_camp",
     FORESTER_CAMP: "forester_camp",
     SAWMILL: "sawmill",
@@ -170,12 +181,15 @@ def resolve_building_public_id(value: str) -> str:
 
 BUILDING_NAMES: Dict[str, str] = {
     WOODCUTTER_CAMP: "Woodcutter Camp",
+    STICK_GATHERER: "Stick Gatherer",
     STICK_GATHERING_TENT: "Stick-gathering Tent",
     STONE_GATHERING_TENT: "Stone-gathering Tent",
+    QUARRY: "Quarry",
     LUMBER_HUT: "Lumber Hut",
     MINER: "Miner",
     FARMER: "Farmer",
     ARTISAN: "Artisan Workshop",
+    GOLD_PANNER: "Gold Panner",
     LUMBER_CAMP: "Lumber Camp",
     FORESTER_CAMP: "Forester Camp",
     SAWMILL: "Sawmill",
@@ -236,12 +250,15 @@ BUILD_COSTS: Dict[str, Dict[Resource, float]] = {
 BUILD_COSTS.update(
     {
         WOODCUTTER_CAMP: {Resource.WOOD: 10, Resource.GOLD: 5},
+        STICK_GATHERER: {},
         STICK_GATHERING_TENT: {Resource.GOLD: 1},
         STONE_GATHERING_TENT: {Resource.GOLD: 2},
+        QUARRY: {},
         LUMBER_HUT: {},
         MINER: {},
         FARMER: {},
         ARTISAN: {},
+        GOLD_PANNER: {},
         LUMBER_CAMP: {Resource.WOOD: 20, Resource.TOOLS: 2},
         FORESTER_CAMP: {Resource.WOOD: 15},
         SAWMILL: {Resource.WOOD: 25, Resource.PLANK: 5},
@@ -324,6 +341,17 @@ BUILDING_METADATA: Dict[str, BuildingMetadata] = {
         role="wood_producer",
         level=2,
     ),
+    STICK_GATHERER: BuildingMetadata(
+        category="wood",
+        category_label="Wood",
+        icon="🥢",
+        job="stick_gatherer",
+        job_name="Stick Gatherer",
+        job_icon="🥢",
+        build_label="Stick Gatherer",
+        role="stick_gatherer",
+        level=1,
+    ),
     STICK_GATHERING_TENT: BuildingMetadata(
         category="wood",
         category_label="Wood",
@@ -343,6 +371,17 @@ BUILDING_METADATA: Dict[str, BuildingMetadata] = {
         job_name="Stone Gatherer",
         job_icon="🪨",
         build_label="Stone-gathering Tent",
+        role="stone_producer",
+        level=1,
+    ),
+    QUARRY: BuildingMetadata(
+        category="stone",
+        category_label="Stone",
+        icon="⛏️",
+        job="stone_gatherer",
+        job_name="Stone Gatherer",
+        job_icon="🪨",
+        build_label="Quarry",
         role="stone_producer",
         level=1,
     ),
@@ -389,6 +428,17 @@ BUILDING_METADATA: Dict[str, BuildingMetadata] = {
         build_label="Artisan Workshop",
         role="toolmaker",
         level=4,
+    ),
+    GOLD_PANNER: BuildingMetadata(
+        category="stone",
+        category_label="Stone",
+        icon="🥇",
+        job="gold_panner",
+        job_name="Gold Panner",
+        job_icon="🥇",
+        build_label="Gold Panner",
+        role="gold_collector",
+        level=1,
     ),
     LUMBER_CAMP: BuildingMetadata(
         category="wood_tools",
@@ -995,18 +1045,14 @@ def _recipe(
 
 
 BUILDING_RECIPES: Dict[str, BuildingRecipe] = {
-    WOODCUTTER_CAMP: _recipe(
+    STICK_GATHERER: _recipe(
         inputs={},
         outputs={},
         cycle_time=1.0,
-        max_workers=2,
+        max_workers=5,
         maintenance={},
-        per_worker_output_rate={Resource.WOOD: 0.01},
-        per_worker_input_rate={
-            Resource.STICKS: 0.04,
-            Resource.STONE: 0.04,
-        },
-        capacity={Resource.WOOD: 30},
+        per_worker_output_rate={Resource.STICKS: 0.1},
+        capacity={Resource.STICKS: 100},
     ),
     STICK_GATHERING_TENT: _recipe(
         inputs={},
@@ -1025,6 +1071,37 @@ BUILDING_RECIPES: Dict[str, BuildingRecipe] = {
         maintenance={},
         per_worker_output_rate={Resource.STONE: 0.01},
         capacity={Resource.STONE: 30},
+    ),
+    QUARRY: _recipe(
+        inputs={},
+        outputs={},
+        cycle_time=1.0,
+        max_workers=5,
+        maintenance={},
+        per_worker_output_rate={Resource.STONE: 0.1},
+        capacity={Resource.STONE: 100},
+    ),
+    GOLD_PANNER: _recipe(
+        inputs={},
+        outputs={},
+        cycle_time=1.0,
+        max_workers=5,
+        maintenance={},
+        per_worker_output_rate={Resource.GOLD: 0.1},
+        capacity={Resource.GOLD: 100},
+    ),
+    WOODCUTTER_CAMP: _recipe(
+        inputs={},
+        outputs={},
+        cycle_time=1.0,
+        max_workers=2,
+        maintenance={},
+        per_worker_output_rate={Resource.WOOD: 0.01},
+        per_worker_input_rate={
+            Resource.STICKS: 0.04,
+            Resource.STONE: 0.04,
+        },
+        capacity={Resource.WOOD: 30},
     ),
     LUMBER_HUT: _recipe(
         inputs={Resource.WOOD: 2},
@@ -1461,9 +1538,8 @@ POPULATION_CAPACITY: int = 20
 WORKERS_INICIALES: int = POPULATION_INITIAL
 
 STARTING_RESOURCES: Dict[Resource, float] = {
-    resource: 0.0 for resource in ALL_RESOURCES
+    resource: 10.0 for resource in ALL_RESOURCES
 }
-STARTING_RESOURCES[Resource.GOLD] = 10.0
 
 STARTING_BUILDINGS: Tuple[Mapping[str, object], ...] = (
     {

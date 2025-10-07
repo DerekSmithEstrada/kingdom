@@ -7,6 +7,7 @@ import pytest
 
 from api import ui_bridge
 from core.game_state import get_game_state
+from core.resources import Resource
 
 
 @pytest.fixture(autouse=True)
@@ -64,15 +65,17 @@ def test_gold_growth_idle_and_employed():
     villagers[0]["employed"] = True
     villagers[1]["employed"] = True
     state.resources["gold"] = 0.0
+    state.inventory.set_amount(Resource.GOLD, 0.0)
 
     state.tick(state.time["last_tick"] + 10.0)
-    assert state.resources["gold"] == pytest.approx(0.5)
+    assert state.resources["gold"] == pytest.approx(1.5)
 
 
 def test_tick_is_idempotent_on_zero_dt():
     state = get_game_state()
     _set_population(state, 4)
     state.resources["gold"] = 1.0
+    state.inventory.set_amount(Resource.GOLD, 1.0)
     state.tick(state.time["last_tick"])
     assert state.resources["gold"] == pytest.approx(1.0)
 
@@ -90,6 +93,7 @@ def test_inactivity_catchup():
     state = get_game_state()
     _set_population(state, 10)
     state.resources["gold"] = 0.0
+    state.inventory.set_amount(Resource.GOLD, 0.0)
     state.tick(state.time["last_tick"] + 120.0)
-    assert state.resources["gold"] == pytest.approx(12.0)
+    assert state.resources["gold"] == pytest.approx(24.0)
 
